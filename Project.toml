@@ -1,0 +1,12 @@
+name = "JacobianFreeNewtonKrylov"
+version = "0.0.0"
+uuid = "ea74541f-29a8-443c-83cd-bcc24bd49708"
+
+[compat]
+julia = "1.9.0"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
