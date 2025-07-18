@@ -1,5 +1,5 @@
 name = "JacobianFreeNewtonKrylov"
-version = "0.0.0"
+version = "0.1.0"
 uuid = "ea74541f-29a8-443c-83cd-bcc24bd49708"
 
 [compat]
