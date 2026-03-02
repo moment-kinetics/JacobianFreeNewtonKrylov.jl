@@ -29,7 +29,7 @@ Useful references:
 [2] V.A. Mousseau, "Fully Implicit Kinetic Modelling of Collisional Plasmas", PhD thesis, Idaho National Engineering Laboratory (1996), https://inis.iaea.org/collection/NCLCollectionStore/_Public/27/067/27067141.pdf.
 [3] https://en.wikipedia.org/wiki/Generalized_minimal_residual_method
 [4] https://www.rikvoorhaar.com/blog/gmres
-[5] E. Carson , J. Liesen, Z. Strakoš, "Towards understanding CG and GMRES through examples", Linear Algebra and its Applications 692, 241–291 (2024), https://doi.org/10.1016/j.laa.2024.04.003. 
+[5] E. Carson , J. Liesen, Z. Strakoš, "Towards understanding CG and GMRES through examples", Linear Algebra and its Applications 692, 241–291 (2024), https://doi.org/10.1016/j.laa.2024.04.003.
 [6] Q. Zou, "GMRES algorithms over 35 years", Applied Mathematics and Computation 445, 127869 (2023), https://doi.org/10.1016/j.amc.2023.127869
 """
 module JacobianFreeNewtonKrylov
@@ -86,8 +86,7 @@ struct nl_solver_info{TH,TV,Tcsg}
                                     # number of members of Krylov subspace
                                     linear_restart=10,
                                     linear_max_restarts=0,
-                                    preconditioner_update_interval=300,
-                                    parallelisation_type=Val(:serial))
+                                    preconditioner_update_interval=300)
         #coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
         # permit coord to be named tuple
         coord_sizes = Tuple(c.n for c ∈ coords)
@@ -98,7 +97,7 @@ struct nl_solver_info{TH,TV,Tcsg}
 
         n_vcut_inds = 0
 
-        H, c, s, g, V = allocate_jfnk_arrays(parallelisation_type, linear_restart, coord_sizes)
+        H, c, s, g, V = allocate_jfnk_arrays(linear_restart, coord_sizes)
 
         return new{typeof(H),typeof(V),typeof(c)}(coords,
                     jfnk_float(rtol), jfnk_float(atol),
@@ -123,7 +122,7 @@ Only the serial version is defined in this module.
 """
 function allocate_jfnk_arrays end
 
-function allocate_jfnk_arrays(::Val{:serial}, linear_restart, coord_sizes)
+function allocate_jfnk_arrays(linear_restart, coord_sizes)
     H = Array{jfnk_float,2}(undef,linear_restart + 1, linear_restart)
     c = Array{jfnk_float,1}(undef,linear_restart + 1)
     s = Array{jfnk_float,1}(undef,linear_restart + 1)
@@ -219,23 +218,8 @@ iteration is therefore
 As the GMRES solve is only used to get the right `direction' for the next Newton step, it
 is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
-function newton_solve!(
-                         x, residual_func!, residual, delta_x, rhs_delta, v, w,
-                         nl_solver_params; left_preconditioner=nothing,
-                         right_preconditioner=nothing, recalculate_preconditioner=nothing,
-                         parallelisation_type=Val(:serial))
-    # This wrapper function constructs the `solver_type` from coords, so that the body of
-    # the inner `newton_solve!()` can be fully type-stable
-    solver_type = Val(Symbol((c for c ∈ keys(nl_solver_params.coords))...))
-    return newton_solve!(x, residual_func!, residual, delta_x, rhs_delta, v, w,
-                         nl_solver_params, solver_type, parallelisation_type;
-                         left_preconditioner=left_preconditioner,
-                         right_preconditioner=right_preconditioner,
-                         recalculate_preconditioner=recalculate_preconditioner)
-end
 function newton_solve!(x, residual_func!, residual, delta_x, rhs_delta, v, w,
-                       nl_solver_params, solver_type::Val,
-                       parallelisation_type::Val;
+                       nl_solver_params;
                        left_preconditioner=nothing,
                        right_preconditioner=nothing,
                        recalculate_preconditioner=nothing)
@@ -252,13 +236,13 @@ function newton_solve!(x, residual_func!, residual, delta_x, rhs_delta, v, w,
     norm_params = (coords, nl_solver_params.rtol, nl_solver_params.atol, x)
 
     residual_func!(residual, x)
-    residual_norm = distributed_norm(solver_type, residual, norm_params...)
+    residual_norm = distributed_norm(residual, norm_params...)
     counter = 0
     linear_counter = 0
 
     # Would need this if delta_x was not set to zero within the Newton iteration loop
     # below.
-    #parallel_map(solver_type, ()->0.0, delta_x)
+    #parallel_map(()->0.0, delta_x)
 
     close_counter = -1
     close_linear_counter = -1
@@ -271,9 +255,8 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
 
         # Solve (approximately?):
         #   J δx = -RHS(x)
-        parallel_map(solver_type, ()->0.0, delta_x)
+        parallel_map(()->0.0, delta_x)
         linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
-                                   solver_type, parallelisation_type,
                                    norm_params; coords=coords,
                                    rtol=nl_solver_params.linear_rtol,
                                    atol=nl_solver_params.linear_atol,
@@ -294,18 +277,18 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         # during the line search, which might make it fail to converge). So calculate the
         # updated value in the buffer `w` until the line search is completed, and only
         # then copy it into `x`.
-        parallel_map(solver_type, (x) -> x, w, x)
-        parallel_map(solver_type, (x,delta_x) -> x + delta_x, w, x, delta_x)
+        parallel_map((x) -> x, w, x)
+        parallel_map((x,delta_x) -> x + delta_x, w, x, delta_x)
         residual_func!(residual, w)
 
         # For the Newton iteration, we want the norm divided by the (sqrt of the) number
         # of grid points, so we can use a tolerance that is independent of the size of the
         # grid. This is unlike the norms needed in `linear_solve!()`.
-        residual_norm = distributed_norm(solver_type, residual, norm_params...)
+        residual_norm = distributed_norm(residual, norm_params...)
         if isnan(residual_norm)
             error("NaN in Newton iteration at iteration $counter")
         end
-        parallel_map(solver_type, (w) -> w, x, w)
+        parallel_map((w) -> w, x, w)
         previous_residual_norm = residual_norm
 
         if recalculate_preconditioner !== nothing && counter % nl_solver_params.preconditioner_update_interval == 0
@@ -350,7 +333,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
     return success
 end
 
-# Below we define the distributed_norm, distributed_dot, 
+# Below we define the distributed_norm, distributed_dot,
 # parallel_map and parallel_delta_x_calc functions, which
 # should be extended by the user for each new use case.
 # Examples for the serial test coordinate in JacobianFreeNewtonKrylovTests.jl
@@ -361,8 +344,7 @@ function distributed_norm end
 
 # No parallelism for this test coordinate. Coordinate argument to this function
 # and those below permits flexibility for more complicated summations using MPI.
-function distributed_norm(
-                               ::Val{:testcoordinate}, residual::AbstractArray{jfnk_float, 1}, coords,
+function distributed_norm(residual::AbstractArray{jfnk_float, 1}, coords,
                                rtol, atol, x)
     residual_norm = 0.0
     for i ∈ eachindex(residual, x)
@@ -376,8 +358,7 @@ end
 
 function distributed_dot end
 
-function distributed_dot(
-                  ::Val{:testcoordinate}, v::AbstractArray{jfnk_float, 1}, w::AbstractArray{jfnk_float, 1}, coords,
+function distributed_dot(v::AbstractArray{jfnk_float, 1}, w::AbstractArray{jfnk_float, 1}, coords,
                   rtol, atol, x)
     local_dot = 0.0
     for i ∈ eachindex(v,w)
@@ -389,22 +370,19 @@ end
 
 function parallel_map end
 
-function parallel_map(
-                  ::Val{:testcoordinate}, func, result::AbstractArray{jfnk_float, 1})
+function parallel_map(func, result::AbstractArray{jfnk_float, 1})
     for i ∈ eachindex(result)
         result[i] = func()
     end
     return nothing
 end
-function parallel_map(
-                  ::Val{:testcoordinate}, func, result::AbstractArray{jfnk_float, 1}, x1)
+function parallel_map(func, result::AbstractArray{jfnk_float, 1}, x1)
     for i ∈ eachindex(result)
         result[i] = func(x1[i])
     end
     return nothing
 end
-function parallel_map(
-                  ::Val{:testcoordinate}, func, result::AbstractArray{jfnk_float, 1}, x1, x2)
+function parallel_map(func, result::AbstractArray{jfnk_float, 1}, x1, x2)
     if isa(x2, AbstractArray)
         for i ∈ eachindex(result)
             result[i] = func(x1[i], x2[i])
@@ -416,8 +394,7 @@ function parallel_map(
     end
     return nothing
 end
-function parallel_map(
-                  ::Val{:testcoordinate}, func, result::AbstractArray{jfnk_float, 1}, x1, x2, x3)
+function parallel_map(func, result::AbstractArray{jfnk_float, 1}, x1, x2, x3)
     if isa(x3, AbstractArray)
         for i ∈ eachindex(result)
             result[i] = func(x1[i], x2[i], x3[i])
@@ -432,8 +409,7 @@ end
 
 function parallel_delta_x_calc end
 
-function parallel_delta_x_calc(
-                  ::Val{:testcoordinate}, delta_x::AbstractArray{jfnk_float, 1}, V, y)
+function parallel_delta_x_calc(delta_x::AbstractArray{jfnk_float, 1}, V, y)
     ny = length(y)
     for iy ∈ 1:ny
         for icoord ∈ eachindex(delta_x)
@@ -463,20 +439,20 @@ Only the serial versions are defined in this module.
 """
 function set_g1! end
 
-function set_g1!( ::Val{:serial}, g, beta)
+function set_g1!(g, beta)
     g[1] = beta
 end
 
 
 function set_Hji! end
 
-function set_Hji!(::Val{:serial}, H, j::jfnk_int, i::jfnk_int, w)
+function set_Hji!(H, j::jfnk_int, i::jfnk_int, w)
     H[j,i] = w
 end
 
 function set_gi! end
 
-function set_gi!(::Val{:serial}, g, c, H, s, i::jfnk_int)
+function set_gi!(g, c, H, s, i::jfnk_int)
     for j ∈ 1:i-1
         gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
         H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
@@ -500,12 +476,10 @@ which allows conveniently finding the residual at each step, and computing the f
 solution, without calculating a least-squares minimisation at each step. See 'algorithm 2
 MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
-function linear_solve!(
-                         x, residual_func!, residual0, delta_x, v, w,
-                         solver_type::Val, parallelisation_type::Val,
-                         norm_params; coords, rtol, atol, restart, max_restarts,
-                         left_preconditioner, right_preconditioner, H, c, s, g, V,
-                         rhs_delta, initial_delta_x_is_zero)
+function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
+                    norm_params; coords, rtol, atol, restart, max_restarts,
+                    left_preconditioner, right_preconditioner, H, c, s, g, V,
+                    rhs_delta, initial_delta_x_is_zero)
     # Solve (approximately?):
     #   J δx = residual0
 
@@ -527,9 +501,9 @@ function linear_solve!(
             right_preconditioner(v)
         end
 
-        parallel_map(solver_type, (x,v) -> x + Jv_scale_factor * v, v, x, v)
+        parallel_map((x,v) -> x + Jv_scale_factor * v, v, x, v)
         residual_func!(rhs_delta, v; krylov=true)
-        parallel_map(solver_type, (rhs_delta, residual0) -> (rhs_delta - residual0) * inv_Jv_scale_factor,
+        parallel_map((rhs_delta, residual0) -> (rhs_delta - residual0) * inv_Jv_scale_factor,
                      v, rhs_delta, residual0)
         left_preconditioner(v)
         return v
@@ -537,7 +511,7 @@ function linear_solve!(
 
     # To start with we use 'w' as a buffer to make a copy of residual0 to which we can apply
     # the left-preconditioner.
-    parallel_map(solver_type, (delta_x) -> delta_x, v, delta_x)
+    parallel_map((delta_x) -> delta_x, v, delta_x)
     left_preconditioner(residual0)
 
     # This function transforms the data stored in 'v' from δx to ≈J.δx
@@ -546,11 +520,11 @@ function linear_solve!(
     approximate_Jacobian_vector_product!(v, initial_delta_x_is_zero)
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
-    parallel_map(solver_type, (residual0, v) -> -residual0 - v, w, residual0, v)
-    beta = distributed_norm(solver_type, w, norm_params...)
-    parallel_map(solver_type, (w,beta) -> w/beta, select_from_V(V, 1), w, beta)
+    parallel_map((residual0, v) -> -residual0 - v, w, residual0, v)
+    beta = distributed_norm(w, norm_params...)
+    parallel_map((w,beta) -> w/beta, select_from_V(V, 1), w, beta)
 
-    set_g1!(parallelisation_type,g,beta)
+    set_g1!(g,beta)
 
     # Set tolerance for GMRES iteration to rtol times the initial residual, unless this is
     # so small that it is smaller than atol, in which case use atol instead.
@@ -568,25 +542,25 @@ function linear_solve!(
             #println("Linear ", counter)
 
             # Compute next Krylov vector
-            parallel_map(solver_type, (V) -> V, w, select_from_V(V, i))
+            parallel_map((V) -> V, w, select_from_V(V, i))
             approximate_Jacobian_vector_product!(w)
 
             # Gram-Schmidt orthogonalization
             for j ∈ 1:i
-                parallel_map(solver_type, (V) -> V, v, select_from_V(V, j))
-                w_dot_Vj = distributed_dot(solver_type, w, v, norm_params...)
+                parallel_map((V) -> V, v, select_from_V(V, j))
+                w_dot_Vj = distributed_dot(w, v, norm_params...)
 
-                set_Hji!(parallelisation_type, H, j, i, w_dot_Vj)
+                set_Hji!(H, j, i, w_dot_Vj)
 
-                parallel_map(solver_type, (w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j))
+                parallel_map((w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j))
             end
-            norm_w = distributed_norm(solver_type, w, norm_params...)
+            norm_w = distributed_norm(w, norm_params...)
 
-            set_Hji!(parallelisation_type, H, i+1, i, norm_w)
+            set_Hji!(H, i+1, i, norm_w)
 
-            parallel_map(solver_type, (w) -> w / H[i+1,i], select_from_V(V, i+1), w)
+            parallel_map((w) -> w / H[i+1,i], select_from_V(V, i+1), w)
 
-            set_gi!(parallelisation_type, g, c, H, s, i)
+            set_gi!(g, c, H, s, i)
 
             residual = abs(g[i+1])
 
@@ -603,7 +577,7 @@ function linear_solve!(
 
         # The following calculates
         #    delta_x .= delta_x .+ sum(y[i] .* V[:,i] for i ∈ 1:length(y))
-        parallel_delta_x_calc(solver_type, delta_x, V, y)
+        parallel_delta_x_calc(delta_x, V, y)
         right_preconditioner(delta_x)
 
         if residual < tol || restart_counter > max_restarts
@@ -614,16 +588,16 @@ function linear_solve!(
 
         # Store J.delta_x in the variable delta_x, to use it to calculate the new first
         # Krylov vector v/beta.
-        parallel_map(solver_type, (delta_x) -> delta_x, v, delta_x)
+        parallel_map((delta_x) -> delta_x, v, delta_x)
         approximate_Jacobian_vector_product!(v)
 
         # Note residual0 has already had the left_preconditioner!() applied to it.
-        parallel_map(solver_type, (residual0, v) -> -residual0 - v, v, residual0, v)
-        beta = distributed_norm(solver_type, v, norm_params...)
+        parallel_map((residual0, v) -> -residual0 - v, v, residual0, v)
+        beta = distributed_norm(v, norm_params...)
         for i ∈ 2:length(y)
-            parallel_map(solver_type, () -> 0.0, select_from_V(V, i))
+            parallel_map(() -> 0.0, select_from_V(V, i))
         end
-        parallel_map(solver_type, (v,beta) -> v/beta, select_from_V(V, 1), v, beta)
+        parallel_map((v,beta) -> v/beta, select_from_V(V, 1), v, beta)
     end
 
     return counter
