@@ -70,11 +70,8 @@ struct nl_solver_info{TH,TV,Tcsg}
     `coords` is a NamedTuple of coordinates corresponding to the dimensions of the variable
     that will be solved. The entries in `coords` should be ordered the same as the memory
     layout of the variable to be solved (i.e. fastest-varying first).
-
-    The nonlinear solver will be called inside a loop over `outer_coords`, so we might need
-    for example a preconditioner object for each point in that outer loop.
     """
-    function nl_solver_info(coords, outer_coords=();
+    function nl_solver_info(coords;
                                     # relative tolerance for convergence
                                     rtol=1.0e-5,
                                     # absolute tolerance for convergence
@@ -91,9 +88,6 @@ struct nl_solver_info{TH,TV,Tcsg}
         # permit coord to be named tuple
         coord_sizes = Tuple(c.n for c ∈ coords)
         total_size_coords = prod(coord_sizes)
-        #outer_coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ outer_coords)
-        # permit coord to be named tuple
-        outer_coord_sizes = Tuple(c.n for c ∈ outer_coords)
 
         n_vcut_inds = 0
 
