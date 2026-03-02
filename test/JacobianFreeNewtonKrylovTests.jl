@@ -5,8 +5,7 @@ using JacobianFreeNewtonKrylov
 
 function linear_test()
     println("    - linear test")
-    coord_names = (:testcoordinate,)
-    @testset "linear test $coord_names" begin
+    @testset "linear test " begin
         # Test represents constant-coefficient diffusion, in 1D steady state, with a
         # central finite-difference discretisation of the second derivative.
         #
@@ -34,12 +33,6 @@ function linear_test()
 
         z = collect(0:n-1) ./ (n-1)
         b = @. - z * (1.0 - z)
-
-        # permit coord to be named tuple
-        the_coord = (name="foo", n_global=n, n=n, ngrid=n)
-        coords = NamedTuple(c => the_coord for c ∈ coord_names)
-        #print(isa(the_coord, coordinate))
-        #print(c.n : c for c ∈ coords)
     
         function rhs_func!(residual, x; krylov=false)
             residual .= A * x - b
@@ -61,7 +54,7 @@ function linear_test()
         w .= 0.0
         
         nl_solver_params = nl_solver_info(
-            coords,
+            length(x),
             rtol = 0.0,
             atol = atol,
             linear_restart = restart,
@@ -77,7 +70,6 @@ end
 
 function nonlinear_test()
     println("    - non-linear test")
-    coord_names = (:testcoordinate,)
     @testset "non-linear test" begin
         # Test represents constant-coefficient diffusion, in 1D steady state, with a
         # central finite-difference discretisation of the second derivative.
@@ -94,10 +86,6 @@ function nonlinear_test()
         z = collect(0:n-1) ./ (n-1)
         b = @. - z * (1.0 - z)
 
-        # permit coord to be named tuple
-        the_coord = (name="foo", n_global=n, n=n, ngrid=n)
-        coords = NamedTuple(c => the_coord for c ∈ coord_names)
-        
         function rhs_func!(residual, x; krylov=false)
             i = 1
             D = abs(x[i])^2.5
@@ -127,7 +115,7 @@ function nonlinear_test()
         w .= 0.0
         
         nl_solver_params = nl_solver_info(
-            coords,
+            length(x),
             rtol = 0.0,
             atol = atol,
             linear_restart = restart,

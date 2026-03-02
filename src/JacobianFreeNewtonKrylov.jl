@@ -42,10 +42,6 @@ jfnk_float = Float64
 jfnk_int = Int64
 
 struct nl_solver_info{TH,TV,Tcsg}
-    # tuple of coordinates, with each coordinate
-    # c in coords having a member c.n which is the
-    # number of points in the c grid.
-    coords::NamedTuple
     rtol::jfnk_float
     atol::jfnk_float
     nonlinear_max_iterations::jfnk_int
@@ -67,11 +63,8 @@ struct nl_solver_info{TH,TV,Tcsg}
     max_linear_iterations_this_step::Base.RefValue{jfnk_int}
     preconditioner_update_interval::jfnk_int
     """
-    `coords` is a NamedTuple of coordinates corresponding to the dimensions of the variable
-    that will be solved. The entries in `coords` should be ordered the same as the memory
-    layout of the variable to be solved (i.e. fastest-varying first).
     """
-    function nl_solver_info(coords;
+    function nl_solver_info(n_degrees_of_freedom;
                                     # relative tolerance for convergence
                                     rtol=1.0e-5,
                                     # absolute tolerance for convergence
@@ -84,16 +77,9 @@ struct nl_solver_info{TH,TV,Tcsg}
                                     linear_restart=10,
                                     linear_max_restarts=0,
                                     preconditioner_update_interval=300)
-        #coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
-        # permit coord to be named tuple
-        coord_sizes = Tuple(c.n for c ∈ coords)
-        total_size_coords = prod(coord_sizes)
+        H, c, s, g, V = allocate_jfnk_arrays(linear_restart, n_degrees_of_freedom)
 
-        n_vcut_inds = 0
-
-        H, c, s, g, V = allocate_jfnk_arrays(linear_restart, coord_sizes)
-
-        return new{typeof(H),typeof(V),typeof(c)}(coords,
+        return new{typeof(H),typeof(V),typeof(c)}(
                     jfnk_float(rtol), jfnk_float(atol),
                     nonlinear_max_iterations,
                     jfnk_float(linear_rtol),
@@ -116,12 +102,12 @@ Only the serial version is defined in this module.
 """
 function allocate_jfnk_arrays end
 
-function allocate_jfnk_arrays(linear_restart, coord_sizes)
-    H = Array{jfnk_float,2}(undef,linear_restart + 1, linear_restart)
-    c = Array{jfnk_float,1}(undef,linear_restart + 1)
-    s = Array{jfnk_float,1}(undef,linear_restart + 1)
-    g = Array{jfnk_float,1}(undef,linear_restart + 1)
-    V = Array{jfnk_float,length(coord_sizes)+1}(undef,reverse(coord_sizes)..., linear_restart+1)
+function allocate_jfnk_arrays(linear_restart::jfnk_int, n_degrees_of_freedom::jfnk_int)
+    H = Array{jfnk_float,2}(undef, linear_restart + 1, linear_restart)
+    c = Array{jfnk_float,1}(undef, linear_restart + 1)
+    s = Array{jfnk_float,1}(undef, linear_restart + 1)
+    g = Array{jfnk_float,1}(undef, linear_restart + 1)
+    V = Array{jfnk_float,2}(undef, n_degrees_of_freedom, linear_restart+1)
     # suspicious that we need to zero the dummy arrays
     H .= 0.0
     c .= 0.0
@@ -154,7 +140,7 @@ end
 
 """
     newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, w, nl_solver_params;
-                  left_preconditioner=nothing, right_preconditioner=nothing, coords)
+                  left_preconditioner=nothing, right_preconditioner=nothing)
 
 `x` is the initial guess at the solution, and is overwritten by the result of the Newton
 solve.
@@ -172,10 +158,6 @@ used internally.
 passed a function that solves \$P.x = b\$ where \$P\$ is the preconditioner matrix, \$b\$
 is given by the values passed to the function as the argument, and the result \$x\$ is
 returned by overwriting the argument.
-
-`coords` is a NamedTuple containing the `coordinate` structs corresponding to each
-dimension in `x`.
-
 
 Tolerances
 ----------
@@ -219,7 +201,6 @@ function newton_solve!(x, residual_func!, residual, delta_x, rhs_delta, v, w,
                        recalculate_preconditioner=nothing)
     rtol = nl_solver_params.rtol
     atol = nl_solver_params.atol
-    coords = nl_solver_params.coords
     if left_preconditioner === nothing
         left_preconditioner = identity
     end
@@ -227,7 +208,7 @@ function newton_solve!(x, residual_func!, residual, delta_x, rhs_delta, v, w,
         right_preconditioner = identity
     end
 
-    norm_params = (coords, nl_solver_params.rtol, nl_solver_params.atol, x)
+    norm_params = (nl_solver_params.rtol, nl_solver_params.atol, x)
 
     residual_func!(residual, x)
     residual_norm = distributed_norm(residual, norm_params...)
@@ -251,7 +232,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         #   J δx = -RHS(x)
         parallel_map(()->0.0, delta_x)
         linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
-                                   norm_params; coords=coords,
+                                   norm_params;
                                    rtol=nl_solver_params.linear_rtol,
                                    atol=nl_solver_params.linear_atol,
                                    restart=nl_solver_params.linear_restart,
@@ -338,7 +319,7 @@ function distributed_norm end
 
 # No parallelism for this test coordinate. Coordinate argument to this function
 # and those below permits flexibility for more complicated summations using MPI.
-function distributed_norm(residual::AbstractArray{jfnk_float, 1}, coords,
+function distributed_norm(residual::AbstractArray{jfnk_float, 1},
                                rtol, atol, x)
     residual_norm = 0.0
     for i ∈ eachindex(residual, x)
@@ -352,7 +333,7 @@ end
 
 function distributed_dot end
 
-function distributed_dot(v::AbstractArray{jfnk_float, 1}, w::AbstractArray{jfnk_float, 1}, coords,
+function distributed_dot(v::AbstractArray{jfnk_float, 1}, w::AbstractArray{jfnk_float, 1},
                   rtol, atol, x)
     local_dot = 0.0
     for i ∈ eachindex(v,w)
@@ -471,7 +452,7 @@ solution, without calculating a least-squares minimisation at each step. See 'al
 MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
 function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
-                    norm_params; coords, rtol, atol, restart, max_restarts,
+                    norm_params; rtol, atol, restart, max_restarts,
                     left_preconditioner, right_preconditioner, H, c, s, g, V,
                     rhs_delta, initial_delta_x_is_zero)
     # Solve (approximately?):
