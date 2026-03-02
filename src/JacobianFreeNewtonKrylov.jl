@@ -204,10 +204,13 @@ iteration is therefore
 As the GMRES solve is only used to get the right `direction' for the next Newton step, it
 is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
-function newton_solve!(x::Vector{jfnk_float}, residual_func!::TFunc, nl_solver_params::nl_solver_info;
-                       left_preconditioner=nothing,
-                       right_preconditioner=nothing,
-                       recalculate_preconditioner=nothing) where TFunc <: Function
+function newton_solve!(x::TVector, residual_func!::TFunc,
+            nl_solver_params::nl_solver_info;
+            left_preconditioner=nothing,
+            right_preconditioner=nothing,
+            recalculate_preconditioner=nothing) where {
+                TVector <: AbstractArray{jfnk_float,1},
+                TFunc <: Function}
     rtol = nl_solver_params.rtol
     atol = nl_solver_params.atol
     residual = nl_solver_params.residual
