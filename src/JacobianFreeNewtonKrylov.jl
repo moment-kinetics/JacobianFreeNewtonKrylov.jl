@@ -233,7 +233,7 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
 
     # Would need this if delta_x was not set to zero within the Newton iteration loop
     # below.
-    #parallel_map(()->0.0, delta_x)
+    #@. delta_x = 0.0
 
     close_counter = -1
     close_linear_counter = -1
@@ -246,7 +246,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
 
         # Solve (approximately?):
         #   J δx = -RHS(x)
-        parallel_map(()->0.0, delta_x)
+        @. delta_x = 0.0
         linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
                                    norm_params;
                                    rtol=nl_solver_params.linear_rtol,
@@ -268,8 +268,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         # during the line search, which might make it fail to converge). So calculate the
         # updated value in the buffer `w` until the line search is completed, and only
         # then copy it into `x`.
-        parallel_map((x) -> x, w, x)
-        parallel_map((x,delta_x) -> x + delta_x, w, x, delta_x)
+        @. w = x + delta_x
         residual_func!(residual, w)
 
         # For the Newton iteration, we want the norm divided by the (sqrt of the) number
@@ -279,7 +278,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         if isnan(residual_norm)
             error("NaN in Newton iteration at iteration $counter")
         end
-        parallel_map((w) -> w, x, w)
+        @. x = w
         previous_residual_norm = residual_norm
 
         if recalculate_preconditioner !== nothing && counter % nl_solver_params.preconditioner_update_interval == 0
@@ -492,17 +491,16 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
             right_preconditioner(v)
         end
 
-        parallel_map((x,v) -> x + Jv_scale_factor * v, v, x, v)
+        @. v = x + Jv_scale_factor * v
         residual_func!(rhs_delta, v; krylov=true)
-        parallel_map((rhs_delta, residual0) -> (rhs_delta - residual0) * inv_Jv_scale_factor,
-                     v, rhs_delta, residual0)
+        @. v = (rhs_delta - residual0) * inv_Jv_scale_factor
         left_preconditioner(v)
         return v
     end
 
     # To start with we use 'w' as a buffer to make a copy of residual0 to which we can apply
     # the left-preconditioner.
-    parallel_map((delta_x) -> delta_x, v, delta_x)
+    @. v = delta_x
     left_preconditioner(residual0)
 
     # This function transforms the data stored in 'v' from δx to ≈J.δx
@@ -511,7 +509,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
     approximate_Jacobian_vector_product!(v, initial_delta_x_is_zero)
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
-    parallel_map((residual0, v) -> -residual0 - v, w, residual0, v)
+    @. w = -residual0 - v
     beta = distributed_norm(w, norm_params...)
     parallel_map((w,beta) -> w/beta, select_from_V(V, 1), w, beta)
 
