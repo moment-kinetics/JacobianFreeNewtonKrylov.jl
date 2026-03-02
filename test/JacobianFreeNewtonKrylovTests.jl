@@ -33,26 +33,16 @@ function linear_test()
 
         z = collect(0:n-1) ./ (n-1)
         b = @. - z * (1.0 - z)
-    
+
         function rhs_func!(residual, x; krylov=false)
             residual .= A * x - b
             return nothing
         end
 
         x = Array{Float64,1}(undef,n)
-        residual = Array{Float64,1}(undef,n)
-        delta_x = Array{Float64,1}(undef,n)
-        rhs_delta = Array{Float64,1}(undef,n)
-        v = Array{Float64,1}(undef,n)
-        w = Array{Float64,1}(undef,n)
 
         x .= 0.0
-        residual .= 0.0
-        delta_x .= 0.0
-        rhs_delta .= 0.0
-        v .= 0.0
-        w .= 0.0
-        
+
         nl_solver_params = nl_solver_info(
             length(x),
             rtol = 0.0,
@@ -60,7 +50,7 @@ function linear_test()
             linear_restart = restart,
             linear_max_restarts = max_restarts)
 
-        newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params)
+        newton_solve!(x, rhs_func!, nl_solver_params)
 
         x_direct = A \ b
 
@@ -101,19 +91,9 @@ function nonlinear_test()
         end
 
         x = Array{Float64,1}(undef,n)
-        residual = Array{Float64,1}(undef,n)
-        delta_x = Array{Float64,1}(undef,n)
-        rhs_delta = Array{Float64,1}(undef,n)
-        v = Array{Float64,1}(undef,n)
-        w = Array{Float64,1}(undef,n)
-        
+
         x .= 1.0
-        residual .= 0.0
-        delta_x .= 0.0
-        rhs_delta .= 0.0
-        v .= 0.0
-        w .= 0.0
-        
+
         nl_solver_params = nl_solver_info(
             length(x),
             rtol = 0.0,
@@ -122,11 +102,11 @@ function nonlinear_test()
             linear_max_restarts = max_restarts,
             nonlinear_max_iterations = 100)
 
-        newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, v, w, nl_solver_params)
+        newton_solve!(x, rhs_func!, nl_solver_params)
 
-        rhs_func!(residual, x)
+        rhs_func!(nl_solver_params.residual, x)
 
-        @test isapprox(residual, zeros(n); atol=4.0*atol)
+        @test isapprox(nl_solver_params.residual, zeros(n); atol=4.0*atol)
     end
 end
 

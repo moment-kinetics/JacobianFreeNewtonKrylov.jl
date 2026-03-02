@@ -62,6 +62,11 @@ struct nl_solver_info{TH,TV,Tcsg}
     max_nonlinear_iterations_this_step::Base.RefValue{jfnk_int}
     max_linear_iterations_this_step::Base.RefValue{jfnk_int}
     preconditioner_update_interval::jfnk_int
+    residual::Vector{jfnk_float}
+    delta_x::Vector{jfnk_float}
+    rhs_delta::Vector{jfnk_float}
+    v::Vector{jfnk_float}
+    w::Vector{jfnk_float}
     """
     """
     function nl_solver_info(n_degrees_of_freedom;
@@ -77,8 +82,23 @@ struct nl_solver_info{TH,TV,Tcsg}
                                     linear_restart=10,
                                     linear_max_restarts=0,
                                     preconditioner_update_interval=300)
-        H, c, s, g, V = allocate_jfnk_arrays(linear_restart, n_degrees_of_freedom)
-
+        H = Array{jfnk_float,2}(undef, linear_restart + 1, linear_restart)
+        c = Array{jfnk_float,1}(undef, linear_restart + 1)
+        s = Array{jfnk_float,1}(undef, linear_restart + 1)
+        g = Array{jfnk_float,1}(undef, linear_restart + 1)
+        V = Array{jfnk_float,2}(undef, n_degrees_of_freedom, linear_restart+1)
+        # suspicious that we need to zero the dummy arrays
+        H .= 0.0
+        c .= 0.0
+        s .= 0.0
+        g .= 0.0
+        V .= 0.0
+        # buffer arrays, previously input parameters to newton_solve!()
+        residual = Vector{jfnk_float}(undef, n_degrees_of_freedom)
+        delta_x = Vector{jfnk_float}(undef, n_degrees_of_freedom)
+        rhs_delta = Vector{jfnk_float}(undef, n_degrees_of_freedom)
+        v = Vector{jfnk_float}(undef, n_degrees_of_freedom)
+        w = Vector{jfnk_float}(undef, n_degrees_of_freedom)
         return new{typeof(H),typeof(V),typeof(c)}(
                     jfnk_float(rtol), jfnk_float(atol),
                     nonlinear_max_iterations,
@@ -88,7 +108,8 @@ struct nl_solver_info{TH,TV,Tcsg}
                     Ref(0), Ref(0), Ref(0), Ref(0),
                     Ref(preconditioner_update_interval),
                     Ref(0), Ref(0),
-                    preconditioner_update_interval)
+                    preconditioner_update_interval,
+                    residual, delta_x, rhs_delta, v, w)
     end
 end
 
@@ -103,17 +124,6 @@ Only the serial version is defined in this module.
 function allocate_jfnk_arrays end
 
 function allocate_jfnk_arrays(linear_restart::jfnk_int, n_degrees_of_freedom::jfnk_int)
-    H = Array{jfnk_float,2}(undef, linear_restart + 1, linear_restart)
-    c = Array{jfnk_float,1}(undef, linear_restart + 1)
-    s = Array{jfnk_float,1}(undef, linear_restart + 1)
-    g = Array{jfnk_float,1}(undef, linear_restart + 1)
-    V = Array{jfnk_float,2}(undef, n_degrees_of_freedom, linear_restart+1)
-    # suspicious that we need to zero the dummy arrays
-    H .= 0.0
-    c .= 0.0
-    s .= 0.0
-    g .= 0.0
-    V .= 0.0
     return H, c, s, g, V
 end
 
@@ -194,13 +204,16 @@ iteration is therefore
 As the GMRES solve is only used to get the right `direction' for the next Newton step, it
 is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
-function newton_solve!(x, residual_func!, residual, delta_x, rhs_delta, v, w,
-                       nl_solver_params;
+function newton_solve!(x::Vector{jfnk_float}, residual_func!::TFunc, nl_solver_params::nl_solver_info;
                        left_preconditioner=nothing,
                        right_preconditioner=nothing,
-                       recalculate_preconditioner=nothing)
+                       recalculate_preconditioner=nothing) where TFunc <: Function
     rtol = nl_solver_params.rtol
     atol = nl_solver_params.atol
+    residual = nl_solver_params.residual
+    delta_x = nl_solver_params.delta_x
+    v = nl_solver_params.v
+    w = nl_solver_params.w
     if left_preconditioner === nothing
         left_preconditioner = identity
     end
@@ -241,7 +254,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
                                    right_preconditioner=right_preconditioner,
                                    H=nl_solver_params.H, c=nl_solver_params.c,
                                    s=nl_solver_params.s, g=nl_solver_params.g,
-                                   V=nl_solver_params.V, rhs_delta=rhs_delta,
+                                   V=nl_solver_params.V, rhs_delta=nl_solver_params.rhs_delta,
                                    initial_delta_x_is_zero=true)
         linear_counter += linear_its
 
