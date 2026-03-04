@@ -15,7 +15,6 @@ function linear_test()
 
         n = 16
         restart = 8
-        max_restarts = 1
         atol = 1.0e-10
 
         A = zeros(n,n)
@@ -48,7 +47,7 @@ function linear_test()
             rtol = 0.0,
             atol = atol,
             linear_restart = restart,
-            linear_max_restarts = max_restarts)
+            )
 
         newton_solve!(x, rhs_func!, nl_solver_params)
 
@@ -70,7 +69,6 @@ function nonlinear_test()
 
         n = 16
         restart = 10
-        max_restarts = 0
         atol = 1.0e-10
 
         z = collect(0:n-1) ./ (n-1)
@@ -99,7 +97,6 @@ function nonlinear_test()
             rtol = 0.0,
             atol = atol,
             linear_restart = restart,
-            linear_max_restarts = max_restarts,
             nonlinear_max_iterations = 100)
 
         newton_solve!(x, rhs_func!, nl_solver_params)

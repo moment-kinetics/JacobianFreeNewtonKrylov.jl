@@ -48,7 +48,6 @@ struct nl_solver_info{TH,TV,Tcsg}
     linear_rtol::jfnk_float
     linear_atol::jfnk_float
     linear_restart::jfnk_int
-    linear_max_restarts::jfnk_int
     H::TH
     c::Tcsg
     s::Tcsg
@@ -80,7 +79,6 @@ struct nl_solver_info{TH,TV,Tcsg}
                                     linear_atol=1.0,
                                     # number of members of Krylov subspace
                                     linear_restart=10,
-                                    linear_max_restarts=0,
                                     preconditioner_update_interval=300)
         H = Array{jfnk_float,2}(undef, linear_restart + 1, linear_restart)
         c = Array{jfnk_float,1}(undef, linear_restart + 1)
@@ -104,7 +102,7 @@ struct nl_solver_info{TH,TV,Tcsg}
                     nonlinear_max_iterations,
                     jfnk_float(linear_rtol),
                     jfnk_float(linear_atol), linear_restart,
-                    linear_max_restarts, H, c, s, g, V,
+                    H, c, s, g, V,
                     Ref(0), Ref(0), Ref(0), Ref(0),
                     Ref(preconditioner_update_interval),
                     Ref(0), Ref(0),
@@ -252,7 +250,6 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
                                    rtol=nl_solver_params.linear_rtol,
                                    atol=nl_solver_params.linear_atol,
                                    restart=nl_solver_params.linear_restart,
-                                   max_restarts=nl_solver_params.linear_max_restarts,
                                    left_preconditioner=left_preconditioner,
                                    right_preconditioner=right_preconditioner,
                                    H=nl_solver_params.H, c=nl_solver_params.c,
@@ -467,7 +464,7 @@ solution, without calculating a least-squares minimisation at each step. See 'al
 MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
 function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
-                    norm_params; rtol, atol, restart, max_restarts,
+                    norm_params; rtol, atol, restart,
                     left_preconditioner, right_preconditioner, H, c, s, g, V,
                     rhs_delta, initial_delta_x_is_zero)
     # Solve (approximately?):
@@ -522,72 +519,50 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
     lsq_result = nothing
     residual = Inf
     counter = 0
-    restart_counter = 1
-    while true
-        inner_counter = 0
-        for i ∈ 1:restart
-            inner_counter = i
-            counter += 1
-            #println("Linear ", counter)
+    inner_counter = 0
+    for i ∈ 1:restart
+        inner_counter = i
+        counter += 1
+        #println("Linear ", counter)
 
-            # Compute next Krylov vector
-            parallel_map((V) -> V, w, select_from_V(V, i))
-            approximate_Jacobian_vector_product!(w)
+        # Compute next Krylov vector
+        parallel_map((V) -> V, w, select_from_V(V, i))
+        approximate_Jacobian_vector_product!(w)
 
-            # Gram-Schmidt orthogonalization
-            for j ∈ 1:i
-                parallel_map((V) -> V, v, select_from_V(V, j))
-                w_dot_Vj = distributed_dot(w, v, norm_params...)
+        # Gram-Schmidt orthogonalization
+        for j ∈ 1:i
+            parallel_map((V) -> V, v, select_from_V(V, j))
+            w_dot_Vj = distributed_dot(w, v, norm_params...)
 
-                set_Hji!(H, j, i, w_dot_Vj)
+            set_Hji!(H, j, i, w_dot_Vj)
 
-                parallel_map((w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j))
-            end
-            norm_w = distributed_norm(w, norm_params...)
-
-            set_Hji!(H, i+1, i, norm_w)
-
-            parallel_map((w) -> w / H[i+1,i], select_from_V(V, i+1), w)
-
-            set_gi!(g, c, H, s, i)
-
-            residual = abs(g[i+1])
-
-            if residual < tol
-                break
-            end
+            parallel_map((w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j))
         end
-        i = inner_counter
+        norm_w = distributed_norm(w, norm_params...)
 
-        # Update initial guess to restart
-        #################################
+        set_Hji!(H, i+1, i, norm_w)
 
-        @views y = H[1:i,1:i] \ g[1:i]
+        parallel_map((w) -> w / H[i+1,i], select_from_V(V, i+1), w)
 
-        # The following calculates
-        #    delta_x .= delta_x .+ sum(y[i] .* V[:,i] for i ∈ 1:length(y))
-        parallel_delta_x_calc(delta_x, V, y)
-        right_preconditioner(delta_x)
+        set_gi!(g, c, H, s, i)
 
-        if residual < tol || restart_counter > max_restarts
+        residual = abs(g[i+1])
+
+        if residual < tol
             break
         end
-
-        restart_counter += 1
-
-        # Store J.delta_x in the variable delta_x, to use it to calculate the new first
-        # Krylov vector v/beta.
-        parallel_map((delta_x) -> delta_x, v, delta_x)
-        approximate_Jacobian_vector_product!(v)
-
-        # Note residual0 has already had the left_preconditioner!() applied to it.
-        parallel_map((residual0, v) -> -residual0 - v, v, residual0, v)
-        beta = distributed_norm(v, norm_params...)
-        for i ∈ 2:length(y)
-            parallel_map(() -> 0.0, select_from_V(V, i))
-        end
-        parallel_map((v,beta) -> v/beta, select_from_V(V, 1), v, beta)
     end
+    i = inner_counter
+
+    # finally, compute delta_x
+    #################################
+
+    @views y = H[1:i,1:i] \ g[1:i]
+
+    # The following calculates
+    #    delta_x .= delta_x .+ sum(y[i] .* V[:,i] for i ∈ 1:length(y))
+    parallel_delta_x_calc(delta_x, V, y)
+    right_preconditioner(delta_x)
 
     return counter
 end
