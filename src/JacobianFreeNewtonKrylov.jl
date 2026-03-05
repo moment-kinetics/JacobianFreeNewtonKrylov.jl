@@ -243,7 +243,6 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
 
         # Solve (approximately?):
         #   J δx = -RHS(x)
-        @. delta_x = 0.0
         linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
                                    norm_params;
                                    rtol=nl_solver_params.linear_rtol,
@@ -253,8 +252,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
                                    right_preconditioner=right_preconditioner,
                                    H=nl_solver_params.H, c=nl_solver_params.c,
                                    s=nl_solver_params.s, g=nl_solver_params.g,
-                                   V=nl_solver_params.V, rhs_delta=nl_solver_params.rhs_delta,
-                                   initial_delta_x_is_zero=true)
+                                   V=nl_solver_params.V, rhs_delta=nl_solver_params.rhs_delta)
         linear_counter += linear_its
 
         # If the residual does not decrease, we will do a line search to find an update
@@ -354,12 +352,10 @@ function distributed_dot(v::Array{jfnk_float, 1}, w::Array{jfnk_float, 1},
     return local_dot
 end
 
-function parallel_delta_x_calc end
-
-function parallel_delta_x_calc(delta_x::Array{jfnk_float, 1}, V, y)
-    ny = length(y)
-    for iy ∈ 1:ny
-        for icoord ∈ eachindex(delta_x)
+function calculate_delta_x(delta_x::Array{jfnk_float, 1}, V, y)
+    @. delta_x = 0.0
+    for iy in eachindex(y)
+        for icoord in eachindex(delta_x)
             delta_x[icoord] += y[iy] * V[icoord,iy]
         end
     end
@@ -405,7 +401,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
                     norm_params; rtol, atol, restart,
                     left_preconditioner, right_preconditioner, H, c, s, g, V,
-                    rhs_delta, initial_delta_x_is_zero)
+                    rhs_delta)
     # Solve (approximately?):
     #   J δx = residual0
 
@@ -436,13 +432,13 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
 
     # To start with we use 'w' as a buffer to make a copy of residual0 to which we can apply
     # the left-preconditioner.
-    @. v = delta_x
+    @. v = 0.0
     left_preconditioner(residual0)
 
     # This function transforms the data stored in 'v' from δx to ≈J.δx
     # If initial δx is all-zero, we can skip a right-preconditioner evaluation because it
     # would just transform all-zero to all-zero.
-    approximate_Jacobian_vector_product!(v, initial_delta_x_is_zero)
+    approximate_Jacobian_vector_product!(v, true)
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
     @. w = -residual0 - v
@@ -510,7 +506,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
 
     # The following calculates
     #    delta_x .= delta_x .+ sum(y[i] .* V[:,i] for i ∈ 1:length(y))
-    parallel_delta_x_calc(delta_x, V, y)
+    calculate_delta_x(delta_x, V, y)
     right_preconditioner(delta_x)
 
     return counter
