@@ -1,28 +1,10 @@
 """
-Nonlinear solvers, using Jacobian-free Newton-Krylov methods.
+A module implementing a Jacobian-free Newton-Krylov method for solving nonlinear systems in serial.
 
-These solvers use an outer Newton iteration. Each step of the Newton iteration requires a
+This class of solvers use an outer Newton iteration. Each step of the Newton iteration requires a
 linear solve of the Jacobian. An 'inexact Jacobian' method is used, and the GMRES method
 (GMRES is a type of Krylov solver) is used to (approximately) solve the (approximate)
 linear system.
-
-Info regarding "parallelisation"
-    This module uses functions defined with serial methods. For the user to enable
-    parallelisation with distributed- or shared-memory MPI, the user needs to add methods
-    (in an external module) to the functions
-
-    `allocate_jfnk_arrays`
-    `set_g1!`
-    `set_Hji!`
-    `set_gi!`
-    `distributed_norm`
-    `distributed_dot`
-    `parallel_map`
-    `parallel_delta_x_calc`
-
-`parallel_map()` is used to apply elementwise functions to arbitrary numbers of arguments.
- We do this rather than writing the loops out explicitly so that `newton_solve!()` and
- `linear_solve!()` can work for arrays with any combination of dimensions.
 
 Useful references:
 [1] V.A. Mousseau and D.A. Knoll, "Fully Implicit Kinetic Solution of Collisional Plasmas", Journal of Computational Physics 136, 308–323 (1997), https://doi.org/10.1006/jcph.1997.5736.
@@ -111,20 +93,6 @@ struct nl_solver_info
 end
 
 """
-Function to permit type-determined allocation of arrays
-where the type `parallelisation_type` allows the user
-to add methods where the arrays are added with different
-communicators.
-
-Only the serial version is defined in this module.
-"""
-function allocate_jfnk_arrays end
-
-function allocate_jfnk_arrays(linear_restart::jfnk_int, n_degrees_of_freedom::jfnk_int)
-    return H, c, s, g, V
-end
-
-"""
     reset_nonlinear_per_stage_counters!(nl_solver_params::Union{nl_solver_info,Nothing})
 
 Reset the counters that hold per-step totals or maximums in `nl_solver_params`.
@@ -146,7 +114,7 @@ function reset_nonlinear_per_stage_counters!(nl_solver_params::Union{nl_solver_i
 end
 
 """
-    newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, w, nl_solver_params;
+    newton_solve!(x, rhs_func!, nl_solver_params;
                   left_preconditioner=nothing, right_preconditioner=nothing)
 
 `x` is the initial guess at the solution, and is overwritten by the result of the Newton
@@ -157,9 +125,6 @@ solve.
 \\mathtt{residual} = F(\\mathtt{x})
 ```
 where we are trying to solve \$F(x)=0\$.
-
-`residual`, `delta_x`, `rhs_delta` and `w` are buffer arrays, with the same size as `x`,
-used internally.
 
 `left_preconditioner` or `right_preconditioner` apply preconditioning. They should be
 passed a function that solves \$P.x = b\$ where \$P\$ is the preconditioner matrix, \$b\$
@@ -224,7 +189,7 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
     norm_params = (nl_solver_params.rtol, nl_solver_params.atol, x)
 
     residual_func!(residual, x)
-    residual_norm = distributed_norm(residual, norm_params...)
+    residual_norm = vector_norm(residual, norm_params...)
     counter = 0
     linear_counter = 0
 
@@ -268,7 +233,7 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         # For the Newton iteration, we want the norm divided by the (sqrt of the) number
         # of grid points, so we can use a tolerance that is independent of the size of the
         # grid. This is unlike the norms needed in `linear_solve!()`.
-        residual_norm = distributed_norm(residual, norm_params...)
+        residual_norm = vector_norm(residual, norm_params...)
         if isnan(residual_norm)
             error("NaN in Newton iteration at iteration $counter")
         end
@@ -317,39 +282,19 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
     return success
 end
 
-# Below we define the distributed_norm, distributed_dot,
-# parallel_map and parallel_delta_x_calc functions, which
-# should be extended by the user for each new use case.
-# Examples for the serial test coordinate in JacobianFreeNewtonKrylovTests.jl
-# are included below to provide documentation for how this functions
-# should be implemented.
-
-function distributed_norm end
-
-# No parallelism for this test coordinate. Coordinate argument to this function
-# and those below permits flexibility for more complicated summations using MPI.
-function distributed_norm(residual::Array{jfnk_float, 1},
+function vector_norm(residual::Array{jfnk_float, 1},
                                rtol, atol, x)
-    residual_norm = 0.0
-    for i ∈ eachindex(residual, x)
-        residual_norm += (residual[i] / (rtol * abs(x[i]) + atol))^2
-    end
-
-    residual_norm = sqrt(residual_norm / length(residual))
-
-    return residual_norm
+    return sqrt(vector_dot_product(residual, residual, rtol, atol, x))
 end
 
-function distributed_dot end
-
-function distributed_dot(v::Array{jfnk_float, 1}, w::Array{jfnk_float, 1},
+function vector_dot_product(v::Array{jfnk_float, 1}, w::Array{jfnk_float, 1},
                   rtol, atol, x)
-    local_dot = 0.0
+    dot_product = 0.0
     for i ∈ eachindex(v,w)
-        local_dot += v[i] * w[i] / (rtol * abs(x[i]) + atol)^2
+        dot_product += v[i] * w[i] / (rtol * abs(x[i]) + atol)^2
     end
-    local_dot = local_dot / length(v)
-    return local_dot
+    dot_product = dot_product / length(v)
+    return dot_product
 end
 
 function calculate_delta_x(delta_x::Array{jfnk_float, 1}, V, y)
@@ -409,7 +354,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
     inv_Jv_scale_factor = 1.0 / Jv_scale_factor
 
     # The vectors `v` that are passed to this function will be normalised so that
-    # `distributed_norm(v) == 1.0`. `distributed_norm()` is defined - including the
+    # `vector_norm(v) == 1.0`. `vector_norm()` is defined - including the
     # relative and absolute tolerances from the Newton iteration - so that a vector with a
     # norm of 1.0 is 'small' in the sense that a vector with a norm of 1.0 is small enough
     # relative to `x` to consider the iteration converged. This means that `x+v` would be
@@ -442,7 +387,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
     @. w = -residual0 - v
-    beta = distributed_norm(w, norm_params...)
+    beta = vector_norm(w, norm_params...)
     for i in eachindex(w)
         V[i,1] = w[i]/beta
     end
@@ -473,7 +418,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
             for k in eachindex(v)
                 v[k] = V[k,j]
             end
-            w_dot_Vj = distributed_dot(w, v, norm_params...)
+            w_dot_Vj = vector_dot_product(w, v, norm_params...)
 
             H[j,i] = w_dot_Vj
 
@@ -481,7 +426,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
                 w[k] = w[k] - H[j,i] * V[k,j]
             end
         end
-        norm_w = distributed_norm(w, norm_params...)
+        norm_w = vector_norm(w, norm_params...)
 
         H[i+1,i] = norm_w
 
