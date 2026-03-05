@@ -354,45 +354,6 @@ function distributed_dot(v::Array{jfnk_float, 1}, w::Array{jfnk_float, 1},
     return local_dot
 end
 
-function parallel_map end
-
-function parallel_map(func, result::AbstractArray{jfnk_float, 1})
-    for i ∈ eachindex(result)
-        result[i] = func()
-    end
-    return nothing
-end
-function parallel_map(func, result::AbstractArray{jfnk_float, 1}, x1)
-    for i ∈ eachindex(result)
-        result[i] = func(x1[i])
-    end
-    return nothing
-end
-function parallel_map(func, result::AbstractArray{jfnk_float, 1}, x1, x2)
-    if isa(x2, AbstractArray)
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i])
-        end
-    else
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2)
-        end
-    end
-    return nothing
-end
-function parallel_map(func, result::AbstractArray{jfnk_float, 1}, x1, x2, x3)
-    if isa(x3, AbstractArray)
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i], x3[i])
-        end
-    else
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i], x3)
-        end
-    end
-    return nothing
-end
-
 function parallel_delta_x_calc end
 
 function parallel_delta_x_calc(delta_x::Array{jfnk_float, 1}, V, y)
@@ -405,14 +366,6 @@ function parallel_delta_x_calc(delta_x::Array{jfnk_float, 1}, V, y)
     return nothing
 end
 
-
-# Utility function for neatness handling that V may be an array or a Tuple of arrays
-function select_from_V(V::Tuple, i)
-    return Tuple(selectdim(Vpart,ndims(Vpart),i) for Vpart ∈ V)
-end
-function select_from_V(V, i)
-    return selectdim(V,ndims(V),i)
-end
 
 """
 Functions `set_g1!`, `set_Hji!` and `set_gi!` defined
@@ -507,8 +460,9 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
     @. w = -residual0 - v
     beta = distributed_norm(w, norm_params...)
-    parallel_map((w,beta) -> w/beta, select_from_V(V, 1), w, beta)
-
+    for i in eachindex(w)
+        V[i,1] = w[i]/beta
+    end
     set_g1!(g,beta)
 
     # Set tolerance for GMRES iteration to rtol times the initial residual, unless this is
@@ -525,23 +479,32 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
         #println("Linear ", counter)
 
         # Compute next Krylov vector
-        parallel_map((V) -> V, w, select_from_V(V, i))
+        for k in eachindex(w)
+            w[k] = V[k,i]
+        end
+
         approximate_Jacobian_vector_product!(w)
 
         # Gram-Schmidt orthogonalization
         for j ∈ 1:i
-            parallel_map((V) -> V, v, select_from_V(V, j))
+            for k in eachindex(v)
+                v[k] = V[k,j]
+            end
             w_dot_Vj = distributed_dot(w, v, norm_params...)
 
             set_Hji!(H, j, i, w_dot_Vj)
 
-            parallel_map((w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j))
+            for k in eachindex(w)
+                w[k] = w[k] - H[j,i] * V[k,j]
+            end
         end
         norm_w = distributed_norm(w, norm_params...)
 
         set_Hji!(H, i+1, i, norm_w)
 
-        parallel_map((w) -> w / H[i+1,i], select_from_V(V, i+1), w)
+        for k in eachindex(w)
+            V[k,i+1] = w[k]/H[i+1,i]
+        end
 
         set_gi!(g, c, H, s, i)
 
