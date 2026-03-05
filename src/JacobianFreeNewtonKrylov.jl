@@ -307,33 +307,6 @@ function calculate_delta_x(delta_x::Array{jfnk_float, 1}, V, y)
     return nothing
 end
 
-
-"""
-Functions `set_g1!`, `set_Hji!` and `set_gi!` defined
-to permit type-determined operations on arrays
-where the type `parallelisation_type` allows the user
-to add methods where the arrays have different communicators
-and thus different MPI functions are required.
-
-Only the serial versions are defined in this module.
-"""
-function set_gi! end
-
-function set_gi!(g, c, H, s, i::jfnk_int)
-    for j ∈ 1:i-1
-        gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
-        H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
-        H[j,i] = gamma
-    end
-    delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
-    s[i] = H[i+1,i] / delta
-    c[i] = H[i,i] / delta
-    H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
-    H[i+1,i] = 0
-    g[i+1] = -s[i] * g[i]
-    g[i] = c[i] * g[i]
-end
-
 """
 Apply the GMRES algorithm to solve the 'linear problem' J.δx^n = R(x^n), which is needed
 at each step of the outer Newton iteration (in `newton_solve!()`).
@@ -434,7 +407,19 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
             V[k,i+1] = w[k]/H[i+1,i]
         end
 
-        set_gi!(g, c, H, s, i)
+        # apply Givens rotation to find new values of H and g
+        for j ∈ 1:i-1
+            gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
+            H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
+            H[j,i] = gamma
+        end
+        delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
+        s[i] = H[i+1,i] / delta
+        c[i] = H[i,i] / delta
+        H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
+        H[i+1,i] = 0
+        g[i+1] = -s[i] * g[i]
+        g[i] = c[i] * g[i]
 
         residual = abs(g[i+1])
 
@@ -450,7 +435,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
     @views y = H[1:i,1:i] \ g[1:i]
 
     # The following calculates
-    #    delta_x .= delta_x .+ sum(y[i] .* V[:,i] for i ∈ 1:length(y))
+    #    delta_x .= sum(y[i] .* V[:,i] for i ∈ 1:length(y))
     calculate_delta_x(delta_x, V, y)
     right_preconditioner(delta_x)
 
