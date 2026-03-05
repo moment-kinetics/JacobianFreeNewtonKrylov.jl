@@ -376,19 +376,6 @@ and thus different MPI functions are required.
 
 Only the serial versions are defined in this module.
 """
-function set_g1! end
-
-function set_g1!(g, beta)
-    g[1] = beta
-end
-
-
-function set_Hji! end
-
-function set_Hji!(H, j::jfnk_int, i::jfnk_int, w)
-    H[j,i] = w
-end
-
 function set_gi! end
 
 function set_gi!(g, c, H, s, i::jfnk_int)
@@ -463,7 +450,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
     for i in eachindex(w)
         V[i,1] = w[i]/beta
     end
-    set_g1!(g,beta)
+    g[1] = beta
 
     # Set tolerance for GMRES iteration to rtol times the initial residual, unless this is
     # so small that it is smaller than atol, in which case use atol instead.
@@ -492,7 +479,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
             end
             w_dot_Vj = distributed_dot(w, v, norm_params...)
 
-            set_Hji!(H, j, i, w_dot_Vj)
+            H[j,i] = w_dot_Vj
 
             for k in eachindex(w)
                 w[k] = w[k] - H[j,i] * V[k,j]
@@ -500,7 +487,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
         end
         norm_w = distributed_norm(w, norm_params...)
 
-        set_Hji!(H, i+1, i, norm_w)
+        H[i+1,i] = norm_w
 
         for k in eachindex(w)
             V[k,i+1] = w[k]/H[i+1,i]
