@@ -41,18 +41,18 @@ export reset_nonlinear_per_stage_counters!,
 jfnk_float = Float64
 jfnk_int = Int64
 
-struct nl_solver_info{TH,TV,Tcsg}
+struct nl_solver_info
     rtol::jfnk_float
     atol::jfnk_float
     nonlinear_max_iterations::jfnk_int
     linear_rtol::jfnk_float
     linear_atol::jfnk_float
     linear_restart::jfnk_int
-    H::TH
-    c::Tcsg
-    s::Tcsg
-    g::Tcsg
-    V::TV
+    H::Array{jfnk_float,2}
+    c::Array{jfnk_float,1}
+    s::Array{jfnk_float,1}
+    g::Array{jfnk_float,1}
+    V::Array{jfnk_float,2}
     n_solves::Base.RefValue{jfnk_int}
     nonlinear_iterations::Base.RefValue{jfnk_int}
     linear_iterations::Base.RefValue{jfnk_int}
@@ -97,17 +97,16 @@ struct nl_solver_info{TH,TV,Tcsg}
         rhs_delta = Vector{jfnk_float}(undef, n_degrees_of_freedom)
         v = Vector{jfnk_float}(undef, n_degrees_of_freedom)
         w = Vector{jfnk_float}(undef, n_degrees_of_freedom)
-        return new{typeof(H),typeof(V),typeof(c)}(
-                    jfnk_float(rtol), jfnk_float(atol),
-                    nonlinear_max_iterations,
-                    jfnk_float(linear_rtol),
-                    jfnk_float(linear_atol), linear_restart,
-                    H, c, s, g, V,
-                    Ref(0), Ref(0), Ref(0), Ref(0),
-                    Ref(preconditioner_update_interval),
-                    Ref(0), Ref(0),
-                    preconditioner_update_interval,
-                    residual, delta_x, rhs_delta, v, w)
+        return new(jfnk_float(rtol), jfnk_float(atol),
+                nonlinear_max_iterations,
+                jfnk_float(linear_rtol),
+                jfnk_float(linear_atol), linear_restart,
+                H, c, s, g, V,
+                Ref(0), Ref(0), Ref(0), Ref(0),
+                Ref(preconditioner_update_interval),
+                Ref(0), Ref(0),
+                preconditioner_update_interval,
+                residual, delta_x, rhs_delta, v, w)
     end
 end
 
@@ -331,7 +330,7 @@ function distributed_norm end
 
 # No parallelism for this test coordinate. Coordinate argument to this function
 # and those below permits flexibility for more complicated summations using MPI.
-function distributed_norm(residual::AbstractArray{jfnk_float, 1},
+function distributed_norm(residual::Array{jfnk_float, 1},
                                rtol, atol, x)
     residual_norm = 0.0
     for i ∈ eachindex(residual, x)
@@ -345,7 +344,7 @@ end
 
 function distributed_dot end
 
-function distributed_dot(v::AbstractArray{jfnk_float, 1}, w::AbstractArray{jfnk_float, 1},
+function distributed_dot(v::Array{jfnk_float, 1}, w::Array{jfnk_float, 1},
                   rtol, atol, x)
     local_dot = 0.0
     for i ∈ eachindex(v,w)
@@ -396,7 +395,7 @@ end
 
 function parallel_delta_x_calc end
 
-function parallel_delta_x_calc(delta_x::AbstractArray{jfnk_float, 1}, V, y)
+function parallel_delta_x_calc(delta_x::Array{jfnk_float, 1}, V, y)
     ny = length(y)
     for iy ∈ 1:ny
         for icoord ∈ eachindex(delta_x)
