@@ -14,8 +14,8 @@ function linear_test()
         # linear_solve!() on its own does not converge to the correct answer.
 
         n = 16
-        restart = 8
-        atol = 1.0e-10
+        restart = 12
+        atol = 1.0e-15
 
         A = zeros(n,n)
         i = 1
@@ -46,8 +46,7 @@ function linear_test()
             length(x),
             rtol = 0.0,
             atol = atol,
-            linear_restart = restart,
-            )
+            linear_restart = restart)
 
         newton_solve!(x, rhs_func!, nl_solver_params)
 
@@ -68,8 +67,8 @@ function nonlinear_test()
         # linear_solve!() on its own does not converge to the correct answer.
 
         n = 16
-        restart = 10
-        atol = 1.0e-10
+        restart = 12
+        atol = 1.0e-15
 
         z = collect(0:n-1) ./ (n-1)
         b = @. - z * (1.0 - z)
