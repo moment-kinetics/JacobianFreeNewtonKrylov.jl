@@ -33,7 +33,7 @@ function linear_test()
         z = collect(0:n-1) ./ (n-1)
         b = @. - z * (1.0 - z)
 
-        function rhs_func!(residual, x; krylov=false)
+        function rhs_func!(residual, x)
             residual .= A * x - b
             return nothing
         end
@@ -73,7 +73,7 @@ function nonlinear_test()
         z = collect(0:n-1) ./ (n-1)
         b = @. - z * (1.0 - z)
 
-        function rhs_func!(residual, x; krylov=false)
+        function rhs_func!(residual, x)
             i = 1
             D = abs(x[i])^2.5
             residual[i] = D * (- 2.0 * x[i] + x[i+1]) - b[i]

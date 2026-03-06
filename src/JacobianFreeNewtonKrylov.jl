@@ -342,7 +342,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
         end
 
         @. v = x + Jv_scale_factor * v
-        residual_func!(rhs_delta, v; krylov=true)
+        residual_func!(rhs_delta, v)
         @. v = (rhs_delta - residual0) * inv_Jv_scale_factor
         left_preconditioner(v)
         return v
