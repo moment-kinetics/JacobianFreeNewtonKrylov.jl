@@ -38,7 +38,6 @@ struct nl_solver_info
     n_solves::Base.RefValue{jfnk_int}
     nonlinear_iterations::Base.RefValue{jfnk_int}
     linear_iterations::Base.RefValue{jfnk_int}
-    precon_iterations::Base.RefValue{jfnk_int}
     solves_since_precon_update::Base.RefValue{jfnk_int}
     max_nonlinear_iterations_this_step::Base.RefValue{jfnk_int}
     max_linear_iterations_this_step::Base.RefValue{jfnk_int}
@@ -78,7 +77,7 @@ struct nl_solver_info
                 jfnk_float(linear_rtol),
                 jfnk_float(linear_atol), linear_restart,
                 H, c, s, g, V,
-                Ref(0), Ref(0), Ref(0), Ref(0),
+                Ref(0), Ref(0), Ref(0),
                 Ref(preconditioner_update_interval),
                 Ref(0), Ref(0),
                 preconditioner_update_interval,
@@ -196,7 +195,6 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
     close_linear_counter = -1
     success = true
     previous_residual_norm = residual_norm
-old_precon_iterations = nl_solver_params.precon_iterations[]
     while (counter < 1 && residual_norm > 1.0e-8) || residual_norm > 1.0
         counter += 1
         #println("\nNewton ", counter)
@@ -266,9 +264,6 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         println("Final residual: ", residual_norm)
         println("Total linear iterations: ", linear_counter)
         println("Linear iterations per Newton: ", linear_counter / counter)
-        precon_count = nl_solver_params.precon_iterations[] - old_precon_iterations
-        println("Total precon iterations: ", precon_count)
-        println("Precon iterations per linear: ", precon_count / linear_counter)
 
         println("Newton iterations after close: ", counter - close_counter)
         println("Total linear iterations after close: ", linear_counter - close_linear_counter)
