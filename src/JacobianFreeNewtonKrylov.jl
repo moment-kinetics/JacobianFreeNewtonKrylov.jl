@@ -164,7 +164,8 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
             nl_solver_params::nl_solver_info;
             left_preconditioner=nothing,
             right_preconditioner=nothing,
-            recalculate_preconditioner=nothing) where {
+            recalculate_preconditioner=nothing,
+            diagnose=true) where {
                 TVector <: AbstractArray{jfnk_float,1},
                 TFunc <: Function}
     rtol = nl_solver_params.rtol
@@ -260,18 +261,20 @@ old_precon_iterations = nl_solver_params.precon_iterations[]
         max(counter, nl_solver_params.max_nonlinear_iterations_this_step[])
     nl_solver_params.max_linear_iterations_this_step[] =
         max(linear_counter, nl_solver_params.max_linear_iterations_this_step[])
-#    println("Newton iterations: ", counter)
-#    println("Final residual: ", residual_norm)
-#    println("Total linear iterations: ", linear_counter)
-#    println("Linear iterations per Newton: ", linear_counter / counter)
-#    precon_count = nl_solver_params.precon_iterations[] - old_precon_iterations
-#    println("Total precon iterations: ", precon_count)
-#    println("Precon iterations per linear: ", precon_count / linear_counter)
-#
-#    println("Newton iterations after close: ", counter - close_counter)
-#    println("Total linear iterations after close: ", linear_counter - close_linear_counter)
-#    println("Linear iterations per Newton after close: ", (linear_counter - close_linear_counter) / (counter - close_counter))
-#    println()
+    if diagnose
+        println("Newton iterations: ", counter)
+        println("Final residual: ", residual_norm)
+        println("Total linear iterations: ", linear_counter)
+        println("Linear iterations per Newton: ", linear_counter / counter)
+        precon_count = nl_solver_params.precon_iterations[] - old_precon_iterations
+        println("Total precon iterations: ", precon_count)
+        println("Precon iterations per linear: ", precon_count / linear_counter)
+
+        println("Newton iterations after close: ", counter - close_counter)
+        println("Total linear iterations after close: ", linear_counter - close_linear_counter)
+        println("Linear iterations per Newton after close: ", (linear_counter - close_linear_counter) / (counter - close_counter))
+        println()
+    end
 
     return success
 end
