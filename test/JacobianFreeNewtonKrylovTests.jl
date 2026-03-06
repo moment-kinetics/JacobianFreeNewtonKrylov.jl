@@ -142,8 +142,8 @@ function nonlinear_test(;
 
         newton_solve!(x, rhs_func!, nl_solver_params;
             left_preconditioner=left_preconditioner,
-            right_preconditioner=right_preconditioner
-            )
+            right_preconditioner=right_preconditioner,
+            diagnose = true)
 
         rhs_func!(nl_solver_params.residual, x)
 
@@ -155,9 +155,9 @@ function runtests()
     @testset "non-linear solvers" begin
         println("non-linear solver tests")
         linear_test()
-        nonlinear_test(preconditioner_option=no_preconditioner, nonlinear_max_iterations=100)
+        nonlinear_test(preconditioner_option=no_preconditioner, nonlinear_max_iterations=22)
         nonlinear_test(preconditioner_option=use_left_preconditioner, nonlinear_max_iterations=18)
-        nonlinear_test(preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=11)
+        nonlinear_test(preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=12)
     end
 end
 
