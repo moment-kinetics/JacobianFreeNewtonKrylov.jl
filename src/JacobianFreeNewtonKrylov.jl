@@ -187,12 +187,6 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
     counter = 0
     linear_counter = 0
 
-    # Would need this if delta_x was not set to zero within the Newton iteration loop
-    # below.
-    #@. delta_x = 0.0
-
-    close_counter = -1
-    close_linear_counter = -1
     success = true
     previous_residual_norm = residual_norm
     while (counter < 1 && residual_norm > 1.0e-8) || residual_norm > 1.0
@@ -239,13 +233,6 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
             recalculate_preconditioner()
         end
 
-        #println("Newton residual ", residual_norm, " ", linear_its, " $rtol $atol")
-
-        if residual_norm < 0.1/rtol && close_counter < 0 && close_linear_counter < 0
-            close_counter = counter
-            close_linear_counter = linear_counter
-        end
-
         if counter > nl_solver_params.nonlinear_max_iterations
             println("maximum iteration limit reached")
             success = false
@@ -264,10 +251,6 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
         println("Final residual: ", residual_norm)
         println("Total linear iterations: ", linear_counter)
         println("Linear iterations per Newton: ", linear_counter / counter)
-
-        println("Newton iterations after close: ", counter - close_counter)
-        println("Total linear iterations after close: ", linear_counter - close_linear_counter)
-        println("Linear iterations per Newton after close: ", (linear_counter - close_linear_counter) / (counter - close_counter))
         println()
     end
 
