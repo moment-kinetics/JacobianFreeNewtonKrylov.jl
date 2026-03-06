@@ -188,12 +188,10 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
     linear_counter = 0
 
     success = true
-    previous_residual_norm = residual_norm
     while (counter < 1 && residual_norm > 1.0e-8) || residual_norm > 1.0
         counter += 1
-        #println("\nNewton ", counter)
 
-        # Solve (approximately?):
+        # use the GMRES algoritm to find the approximate solution to:
         #   J δx = -RHS(x)
         linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
                                    norm_params;
@@ -207,25 +205,15 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
                                    V=nl_solver_params.V, rhs_delta=nl_solver_params.rhs_delta)
         linear_counter += linear_its
 
-        # If the residual does not decrease, we will do a line search to find an update
-        # that does decrease the residual. The value of `x` is used to define the
-        # normalisation value with rtol that is used to calculate the residual, so do not
-        # want to update it until the line search is completed (otherwise the norm changes
-        # during the line search, which might make it fail to converge). So calculate the
-        # updated value in the buffer `w` until the line search is completed, and only
-        # then copy it into `x`.
+        # calculate the residual for the NaN diagnostic check
         @. w = x + delta_x
         residual_func!(residual, w)
-
-        # For the Newton iteration, we want the norm divided by the (sqrt of the) number
-        # of grid points, so we can use a tolerance that is independent of the size of the
-        # grid. This is unlike the norms needed in `linear_solve!()`.
         residual_norm = vector_norm(residual, norm_params...)
         if isnan(residual_norm)
             error("NaN in Newton iteration at iteration $counter")
         end
+        # update root estimate x_n+1 = x_n + delta_x
         @. x = w
-        previous_residual_norm = residual_norm
 
         if recalculate_preconditioner !== nothing && counter % nl_solver_params.preconditioner_update_interval == 0
             # Have taken a large number of Newton iterations already - convergence must be
