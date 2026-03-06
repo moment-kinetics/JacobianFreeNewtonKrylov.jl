@@ -62,18 +62,12 @@ struct nl_solver_info
                                     # number of members of Krylov subspace
                                     linear_restart=10,
                                     preconditioner_update_interval=300)
+        # buffer arrays for Newton-Krylov-GMRES solve
         H = Array{jfnk_float,2}(undef, linear_restart + 1, linear_restart)
         c = Array{jfnk_float,1}(undef, linear_restart + 1)
         s = Array{jfnk_float,1}(undef, linear_restart + 1)
         g = Array{jfnk_float,1}(undef, linear_restart + 1)
         V = Array{jfnk_float,2}(undef, n_degrees_of_freedom, linear_restart+1)
-        # suspicious that we need to zero the dummy arrays
-        H .= 0.0
-        c .= 0.0
-        s .= 0.0
-        g .= 0.0
-        V .= 0.0
-        # buffer arrays, previously input parameters to newton_solve!()
         residual = Vector{jfnk_float}(undef, n_degrees_of_freedom)
         delta_x = Vector{jfnk_float}(undef, n_degrees_of_freedom)
         rhs_delta = Vector{jfnk_float}(undef, n_degrees_of_freedom)
@@ -369,6 +363,9 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
     residual = Inf
     counter = 0
     inner_counter = 0
+    # set H to zero to ensure lower-than-diagonal entries
+    # of the upper Hessenberg matrix are zero
+    @. H = 0.0
     for i ∈ 1:restart
         inner_counter = i
         counter += 1
