@@ -320,7 +320,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
                     norm_params; rtol, atol, restart,
                     left_preconditioner, right_preconditioner, H, c, s, g, V,
                     rhs_delta)
-    # Solve (approximately?):
+    # use the GMRES algoritm to find the approximate solution to:
     #   J δx = residual0
 
     Jv_scale_factor = 1.0e3
@@ -348,18 +348,13 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
         return v
     end
 
-    # To start with we use 'w' as a buffer to make a copy of residual0 to which we can apply
+    # To start with we use 'v' as a buffer to make a copy of residual0 to which we can apply
     # the left-preconditioner.
-    @. v = 0.0
-    left_preconditioner(residual0)
-
-    # This function transforms the data stored in 'v' from δx to ≈J.δx
-    # If initial δx is all-zero, we can skip a right-preconditioner evaluation because it
-    # would just transform all-zero to all-zero.
-    approximate_Jacobian_vector_product!(v, true)
+    @. v = residual0
+    left_preconditioner(v)
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
-    @. w = -residual0 - v
+    @. w = -v
     beta = vector_norm(w, norm_params...)
     for i in eachindex(w)
         V[i,1] = w[i]/beta

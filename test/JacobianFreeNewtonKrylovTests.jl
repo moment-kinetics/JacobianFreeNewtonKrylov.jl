@@ -3,6 +3,12 @@ module JacobianFreeNewtonKrylovTests
 using Test: @testset, @test
 using JacobianFreeNewtonKrylov
 
+@enum PreconditionerOptionType begin
+    use_right_preconditioner
+    use_left_preconditioner
+    no_preconditioner
+end
+
 function linear_test()
     println("    - linear test")
     @testset "linear test " begin
@@ -57,10 +63,10 @@ function linear_test()
 end
 
 function nonlinear_test(;
-            use_preconditioner=false,
+            preconditioner_option::PreconditionerOptionType=no_preconditioner,
             nonlinear_max_iterations=100)
-    println("    - non-linear test: use_preconditioner = $use_preconditioner")
-    @testset "non-linear test: use_preconditioner = $use_preconditioner" begin
+    println("    - non-linear test: $preconditioner_option")
+    @testset "non-linear test: $preconditioner_option" begin
         # Test represents constant-coefficient diffusion, in 1D steady state, with a
         # central finite-difference discretisation of the second derivative.
         #
@@ -88,30 +94,43 @@ function nonlinear_test(;
             residual[i] = D * (x[i-1] - 2.0 * x[i]) - b[i]
             return nothing
         end
-        if use_preconditioner
-            A = zeros(n,n)
-            i = 1
-            A[i,i] = -2.0
-            A[i,i+1] = 1.0
-            for i ∈ 2:n-1
-                A[i,i-1] = 1.0
-                A[i,i] = -2.0
-                A[i,i+1] = 1.0
-            end
-            i = n
+
+        # a preconditioner
+        A = zeros(n,n)
+        i = 1
+        A[i,i] = -2.0
+        A[i,i+1] = 1.0
+        for i ∈ 2:n-1
             A[i,i-1] = 1.0
             A[i,i] = -2.0
-            dummyx = Array{Float64,1}(undef,n)
-            function preconditioner!(x)
-                dummyx .= x
-                x .= A \ dummyx
-                return nothing
-            end
-        else
-            preconditioner! = identity
+            A[i,i+1] = 1.0
         end
-        x = Array{Float64,1}(undef,n)
+        i = n
+        A[i,i-1] = 1.0
+        A[i,i] = -2.0
+        dummyx = Array{Float64,1}(undef,n)
+        # function to apply the preconditioner in place
+        function preconditioner!(x)
+            dummyx .= x
+            x .= A \ dummyx
+            return nothing
+        end
 
+        # choose whether to use a right or left preconditioner in test
+        if preconditioner_option == use_left_preconditioner
+            left_preconditioner = preconditioner!
+            right_preconditioner = identity
+        elseif preconditioner_option == use_right_preconditioner
+            left_preconditioner = identity
+            right_preconditioner = preconditioner!
+        elseif preconditioner_option == no_preconditioner
+            left_preconditioner = identity
+            right_preconditioner = identity
+        end
+
+        # the solution vector
+        x = Array{Float64,1}(undef,n)
+        # initial condition
         x .= 1.0
 
         nl_solver_params = nl_solver_info(
@@ -122,7 +141,9 @@ function nonlinear_test(;
             nonlinear_max_iterations = nonlinear_max_iterations)
 
         newton_solve!(x, rhs_func!, nl_solver_params;
-            right_preconditioner=preconditioner!)
+            left_preconditioner=left_preconditioner,
+            right_preconditioner=right_preconditioner
+            )
 
         rhs_func!(nl_solver_params.residual, x)
 
@@ -134,8 +155,9 @@ function runtests()
     @testset "non-linear solvers" begin
         println("non-linear solver tests")
         linear_test()
-        nonlinear_test(use_preconditioner=false, nonlinear_max_iterations=100)
-        nonlinear_test(use_preconditioner=true, nonlinear_max_iterations=11)
+        nonlinear_test(preconditioner_option=no_preconditioner, nonlinear_max_iterations=100)
+        nonlinear_test(preconditioner_option=use_left_preconditioner, nonlinear_max_iterations=18)
+        nonlinear_test(preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=11)
     end
 end
 
