@@ -308,7 +308,7 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
         residual_func!(rhs_delta, v)
         @. v = (rhs_delta - residual0) * inv_Jv_scale_factor
         left_preconditioner(v)
-        return v
+        return nothing
     end
 
     # To start with we use 'v' as a buffer to make a copy of residual0 to which we can apply
