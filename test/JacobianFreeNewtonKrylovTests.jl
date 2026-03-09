@@ -23,6 +23,15 @@ function linear_test()
         restart = 12
         atol = 1.0e-15
 
+        # the grid z
+        z = collect(0:n-1) ./ (n-1)
+        # grid spacing
+        Dz = z[2] - z[1]
+        # Delta t
+        Dt = 1.0
+        # RHS > 0
+        b = @. Dt * z * (1.0 - z)
+
         A = zeros(n,n)
         i = 1
         A[i,i] = -2.0
@@ -36,11 +45,14 @@ function linear_test()
         A[i,i-1] = 1.0
         A[i,i] = -2.0
 
-        z = collect(0:n-1) ./ (n-1)
-        b = @. - z * (1.0 - z)
-
+        # a time advance matrix
+        P = zeros(n,n)
+        for i in eachindex(z)
+            P[i,i] = 1.0
+            @views @. P[i,:] -= (Dt / Dz^2) * A[i,:]
+        end
         function rhs_func!(residual, x)
-            residual .= A * x - b
+            residual .= P * x - b
             return nothing
         end
 
@@ -56,7 +68,7 @@ function linear_test()
 
         newton_solve!(x, rhs_func!, nl_solver_params)
 
-        x_direct = A \ b
+        x_direct = P \ b
 
         @test isapprox(x, x_direct; atol=100.0*atol)
     end
@@ -74,28 +86,33 @@ function nonlinear_test(;
         # because the inexact Jacobian-vector product we use in linear_solve!() means
         # linear_solve!() on its own does not converge to the correct answer.
 
-        n = 16
+        n = 64
         restart = 12
         atol = 1.0e-15
 
+        # the grid z
         z = collect(0:n-1) ./ (n-1)
-        b = @. - z * (1.0 - z)
+        # grid spacing
+        Dz = z[2] - z[1]
+        # Delta t
+        Dt = 100.0
+        # RHS > 0
+        b = @. Dt * z * (1.0 - z)
 
         function rhs_func!(residual, x)
             i = 1
-            D = abs(x[i])^2.5
-            residual[i] = D * (- 2.0 * x[i] + x[i+1]) - b[i]
+            D = 1.0 + abs(x[i])^2.5
+            residual[i] = x[i] - (Dt / Dz^2) * D * (- 2.0 * x[i] + x[i+1]) - b[i]
             for i ∈ 2:n-1
-                D = abs(x[i])^2.5
-                residual[i] = D * (x[i-1] - 2.0 * x[i] + x[i+1]) - b[i]
+                D = 1.0 + abs(x[i])^2.5
+                residual[i] = x[i] - (Dt / Dz^2) * D * (x[i-1] - 2.0 * x[i] + x[i+1]) - b[i]
             end
             i = n
-            D = abs(x[i])^2.5
-            residual[i] = D * (x[i-1] - 2.0 * x[i]) - b[i]
+            D = 1.0 + abs(x[i])^2.5
+            residual[i] = x[i] - (Dt / Dz^2) * D * (x[i-1] - 2.0 * x[i]) / Dz^2 - b[i]
             return nothing
         end
 
-        # a preconditioner
         A = zeros(n,n)
         i = 1
         A[i,i] = -2.0
@@ -108,11 +125,17 @@ function nonlinear_test(;
         i = n
         A[i,i-1] = 1.0
         A[i,i] = -2.0
+        # a preconditioner
+        P = zeros(n,n)
+        for i in eachindex(z)
+            P[i,i] = 1.0
+            @views @. P[i,:] -= (Dt / Dz^2) * A[i,:]
+        end
         dummyx = Array{Float64,1}(undef,n)
         # function to apply the preconditioner in place
         function preconditioner!(x)
             dummyx .= x
-            x .= A \ dummyx
+            x .= P \ dummyx
             return nothing
         end
 
@@ -131,7 +154,7 @@ function nonlinear_test(;
         # the solution vector
         x = Array{Float64,1}(undef,n)
         # initial condition
-        x .= 1.0
+        x .= 0.0
 
         nl_solver_params = nl_solver_info(
             length(x),
@@ -155,9 +178,9 @@ function runtests()
     @testset "non-linear solvers" begin
         println("non-linear solver tests")
         linear_test()
-        nonlinear_test(preconditioner_option=no_preconditioner, nonlinear_max_iterations=22)
-        nonlinear_test(preconditioner_option=use_left_preconditioner, nonlinear_max_iterations=18)
-        nonlinear_test(preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=12)
+        nonlinear_test(preconditioner_option=no_preconditioner, nonlinear_max_iterations=100)
+        nonlinear_test(preconditioner_option=use_left_preconditioner, nonlinear_max_iterations=100)
+        nonlinear_test(preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=100)
     end
 end
 
