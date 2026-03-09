@@ -164,7 +164,7 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
             left_preconditioner=nothing,
             right_preconditioner=nothing,
             recalculate_preconditioner=nothing,
-            diagnose=true) where {
+            diagnose::Bool=false) where {
                 TVector <: AbstractArray{jfnk_float,1},
                 TFunc <: Function}
     rtol = nl_solver_params.rtol
