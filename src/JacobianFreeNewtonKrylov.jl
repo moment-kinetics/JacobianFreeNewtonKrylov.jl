@@ -254,7 +254,7 @@ function vector_dot_product(v::Array{jfnk_float, 1}, w::Array{jfnk_float, 1},
                   rtol, atol, x)
     dot_product = 0.0
     for i ∈ eachindex(v,w)
-        dot_product += v[i] * w[i] / (rtol * abs(x[i]) + atol)^2
+        dot_product += v[i] * w[i] / abs2(rtol * abs(x[i]) + atol)
     end
     dot_product = dot_product / length(v)
     return dot_product
