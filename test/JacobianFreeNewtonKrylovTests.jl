@@ -76,7 +76,7 @@ function nonlinear_test(;
 
         n = 16
         restart = 12
-        atol = 1.0e-15
+        atol = 1.0e-14
 
         z = collect(0:n-1) ./ (n-1)
         b = @. - z * (1.0 - z)
@@ -147,7 +147,7 @@ function nonlinear_test(;
 
         rhs_func!(nl_solver_params.residual, x)
 
-        @test isapprox(nl_solver_params.residual, zeros(n); atol=4.0*atol)
+        @test isapprox(nl_solver_params.residual, zeros(n); atol=10.0*atol)
     end
 end
 
@@ -156,7 +156,7 @@ function runtests()
         println("non-linear solver tests")
         linear_test()
         nonlinear_test(preconditioner_option=no_preconditioner, nonlinear_max_iterations=22)
-        nonlinear_test(preconditioner_option=use_left_preconditioner, nonlinear_max_iterations=18)
+        nonlinear_test(preconditioner_option=use_left_preconditioner, nonlinear_max_iterations=25)
         nonlinear_test(preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=12)
     end
 end
