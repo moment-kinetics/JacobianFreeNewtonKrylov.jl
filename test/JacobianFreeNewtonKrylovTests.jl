@@ -199,8 +199,8 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
 end
 
 function runtests()
-    @testset "non-linear solvers" begin
-        println("non-linear solver tests")
+    @testset "JacobianFreeNewtonKrylov Tests" begin
+        println("JacobianFreeNewtonKrylov Tests")
         linear_test(n=16, atol_expected=1.0e-2)
         linear_test(n=32, atol_expected=(1.0/2.0)*1.0e-2)
         linear_test(n=64, atol_expected=(1.0/4.0)*1.0e-2, max_nkrylov=16)
