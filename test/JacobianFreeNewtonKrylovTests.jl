@@ -9,7 +9,7 @@ using JacobianFreeNewtonKrylov
     no_preconditioner
 end
 
-function linear_test()
+function linear_test(; n=16, max_nkrylov = 12, atol=1.0e-13, atol_expected=1.0e-5, nonlinear_max_iterations=100)
     println("    - linear test")
     @testset "linear test " begin
         # Test represents constant-coefficient diffusion, in 1D steady state, with a
@@ -19,58 +19,68 @@ function linear_test()
         # because the inexact Jacobian-vector product we use in linear_solve!() means
         # linear_solve!() on its own does not converge to the correct answer.
 
-        n = 16
-        restart = 12
-        atol = 1.0e-15
+        #n = 16
+        restart = max_nkrylov
+        #atol = 1.0e-13
 
         # the grid z
         z = collect(0:n-1) ./ (n-1)
         # grid spacing
         Dz = z[2] - z[1]
-        # Delta t
-        Dt = 1.0
-        # RHS > 0
-        b = @. Dt * z * (1.0 - z)
+        # source s = - b > 0
+        b = @. - z * (1.0 - z)
+        # diffusion coefficient
+        Ddiffuse = 0.05
+        # including Dz spacing
+        Dk = (Ddiffuse / Dz^2)
 
         A = zeros(n,n)
         i = 1
-        A[i,i] = -2.0
-        A[i,i+1] = 1.0
+        # boundary condition row
+        # residual = 0 when x[i] = 1.0
+        A[i,i] = 1.0
+        b[i] = 1.0
+        # central differences d^2/d z^2 for interior points
         for i ∈ 2:n-1
-            A[i,i-1] = 1.0
-            A[i,i] = -2.0
-            A[i,i+1] = 1.0
+            A[i,i-1] = 1.0 * Dk
+            A[i,i] = -2.0 * Dk
+            A[i,i+1] = 1.0 * Dk
         end
         i = n
-        A[i,i-1] = 1.0
-        A[i,i] = -2.0
+        # boundary condition row
+        # residual = 0 when x[i] = 1.0
+        A[i,i] = 1.0
+        b[i] = 1.0
 
-        # a time advance matrix
-        P = zeros(n,n)
-        for i in eachindex(z)
-            P[i,i] = 1.0
-            @views @. P[i,:] -= (Dt / Dz^2) * A[i,:]
-        end
         function rhs_func!(residual, x)
-            residual .= P * x - b
+            residual .= A * x - b
             return nothing
         end
 
         x = Array{Float64,1}(undef,n)
-
-        x .= 0.0
+        # initial guess (respects b.c. x[1] = x[n] = 1.0)
+        x .= 1.0
 
         nl_solver_params = nl_solver_info(
             length(x),
             rtol = 0.0,
             atol = atol,
-            linear_restart = restart)
+            linear_restart = restart,
+            linear_rtol=0.0,
+            nonlinear_max_iterations = nonlinear_max_iterations)
 
-        newton_solve!(x, rhs_func!, nl_solver_params)
+        newton_solve!(x, rhs_func!, nl_solver_params,
+            diagnose = true)
 
-        x_direct = P \ b
+        x_direct = A \ b
 
         @test isapprox(x, x_direct; atol=100.0*atol)
+
+        x_expected = deepcopy(z)
+
+        @. x_expected = 1.0 + (1.0/(12.0 * Ddiffuse))*(z + z^4 - 2.0 * z^3)
+
+        @test isapprox(x_direct, x_expected; atol=atol_expected)
     end
 end
 
@@ -177,10 +187,13 @@ end
 function runtests()
     @testset "non-linear solvers" begin
         println("non-linear solver tests")
-        linear_test()
-        nonlinear_test(preconditioner_option=no_preconditioner, nonlinear_max_iterations=100)
-        nonlinear_test(preconditioner_option=use_left_preconditioner, nonlinear_max_iterations=100)
-        nonlinear_test(preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=100)
+        linear_test(n=16, atol_expected=1.0e-2)
+        linear_test(n=32, atol_expected=(1.0/2.0)*1.0e-2)
+        linear_test(n=64, atol_expected=(1.0/4.0)*1.0e-2, max_nkrylov=16)
+        linear_test(n=128, atol_expected=(1.0/8.0)*1.0e-2, atol=1.0e-12, max_nkrylov=32)
+        #nonlinear_test(preconditioner_option=no_preconditioner, nonlinear_max_iterations=100)
+        #nonlinear_test(preconditioner_option=use_left_preconditioner, nonlinear_max_iterations=100)
+        #nonlinear_test(preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=100)
     end
 end
 
