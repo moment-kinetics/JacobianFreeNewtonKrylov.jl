@@ -101,12 +101,12 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
         z = collect(0:n-1) ./ (n-1)
         # grid spacing
         Dz = z[2] - z[1]
-        # source s = - b > 0
-        b = @. - z * (1.0 - z)
         # diffusion coefficient
         Ddiffuse = 0.05
         # including Dz spacing
         Dk = (Ddiffuse / Dz^2)
+        # source s = - b = Ddiffuse*(1 + z - z^2)^5/2
+        b = @. - 2.0*Ddiffuse*( 1.0 + z * (1.0 - z))^2.5
 
         # boundary conditions
         b[1] = 1.0
@@ -188,8 +188,13 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
 
         rhs_func!(nl_solver_params.residual, x)
 
-        #@test isapprox(nl_solver_params.residual, zeros(n); atol=6.0*atol)
+        # check the residual is small
         @test maximum(abs.(nl_solver_params.residual)) < 6.0*atol
+
+        # compare against the manufactured solution
+        x_expected = deepcopy(x)
+        @. x_expected = 1.0 + z*(1-z)
+        @test maximum(abs.(x .- x_expected)) < 4.0*atol
     end
 end
 
