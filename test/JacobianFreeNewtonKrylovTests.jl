@@ -14,7 +14,9 @@ function linear_test(; n=16, max_nkrylov = 12, atol=1.0e-13, atol_expected=1.0e-
     @testset "linear test n=$n" begin
         # Test represents constant-coefficient diffusion, in 1D steady state, with a
         # central finite-difference discretisation of the second derivative.
-        #
+        # solves:
+        # Ddiffuse d^2 T / d z^2 + s = 0
+        # with x = T and s = -b
         # Note, need to use newton_solve!() here even though it is a linear problem,
         # because the inexact Jacobian-vector product we use in linear_solve!() means
         # linear_solve!() on its own does not converge to the correct answer.
@@ -89,10 +91,9 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
     @testset "non-linear test: $preconditioner_option n=$n" begin
         # Test represents constant-coefficient diffusion, in 1D steady state, with a
         # central finite-difference discretisation of the second derivative.
-        #
-        # Note, need to use newton_solve!() here even though it is a linear problem,
-        # because the inexact Jacobian-vector product we use in linear_solve!() means
-        # linear_solve!() on its own does not converge to the correct answer.
+        # solves:
+        # Ddiffuse T^(5/2) d^2 T / d z^2 + s = 0
+        # with x = T and s = -b
 
         restart = max_nkrylov
 
