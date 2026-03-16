@@ -21,8 +21,6 @@ function linear_test(; n=16, max_nkrylov = 12, atol=1.0e-13, atol_expected=1.0e-
         # because the inexact Jacobian-vector product we use in linear_solve!() means
         # linear_solve!() on its own does not converge to the correct answer.
 
-        restart = max_nkrylov
-
         # the grid z
         z = collect(0:n-1) ./ (n-1)
         # grid spacing
@@ -65,7 +63,7 @@ function linear_test(; n=16, max_nkrylov = 12, atol=1.0e-13, atol_expected=1.0e-
             typeof(x[1]), length(x),
             rtol = 0.0,
             atol = atol,
-            linear_restart = restart,
+            krylov_subspace_max_size = max_nkrylov,
             linear_rtol=0.0,
             nonlinear_max_iterations = nonlinear_max_iterations)
 
@@ -94,8 +92,6 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
         # solves:
         # Ddiffuse T^(5/2) d^2 T / d z^2 + s = 0
         # with x = T and s = -b
-
-        restart = max_nkrylov
 
         # the grid z
         z = collect(0:n-1) ./ (n-1)
@@ -176,7 +172,7 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
             typeof(x[1]), length(x),
             rtol = 0.0,
             atol = atol,
-            linear_restart = restart,
+            krylov_subspace_max_size = max_nkrylov,
             linear_rtol=0.0,
             nonlinear_max_iterations = nonlinear_max_iterations)
 

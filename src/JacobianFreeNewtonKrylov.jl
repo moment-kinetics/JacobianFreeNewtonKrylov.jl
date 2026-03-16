@@ -35,7 +35,7 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     preconditioner_update_interval::Int64
     linear_rtol::TFloat
     linear_atol::TFloat
-    linear_restart::Int64
+    krylov_subspace_max_size::Int64
     H::Array{TFloat,2}
     c::Array{TFloat,1}
     s::Array{TFloat,1}
@@ -50,24 +50,25 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     """
     """
     function NewtonKrylovSolverData(::Type{TFloat}, n_degrees_of_freedom::Int64;
-                                    # relative tolerance for convergence
+                                    # relative tolerance for convergence of Newton iterations
                                     rtol::TFloatTol=1.0e-5,
-                                    # absolute tolerance for convergence
+                                    # absolute tolerance for convergence of Newton iterations
                                     atol::TFloatTol=1.0e-12,
                                     # max newton_solve! iterations
                                     nonlinear_max_iterations::Int64=20,
+                                    # tolerance for GMRES linear solve
                                     linear_rtol::TFloatTol=1.0e-3,
                                     linear_atol::TFloatTol=1.0,
-                                    # number of members of Krylov subspace
-                                    linear_restart::Int64=10,
+                                    # (maximum) number of members of Krylov subspace in GMRES solve
+                                    krylov_subspace_max_size::Int64=10,
                                     preconditioner_update_interval::Int64=300) where {
                                         TFloat <: AbstractFloat, TFloatTol <: AbstractFloat}
         # buffer arrays for Newton-Krylov-GMRES solve
-        H = Array{TFloat,2}(undef, linear_restart + 1, linear_restart)
-        c = Array{TFloat,1}(undef, linear_restart + 1)
-        s = Array{TFloat,1}(undef, linear_restart + 1)
-        g = Array{TFloat,1}(undef, linear_restart + 1)
-        V = Array{TFloat,2}(undef, n_degrees_of_freedom, linear_restart+1)
+        H = Array{TFloat,2}(undef, krylov_subspace_max_size + 1, krylov_subspace_max_size)
+        c = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
+        s = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
+        g = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
+        V = Array{TFloat,2}(undef, n_degrees_of_freedom, krylov_subspace_max_size + 1)
         residual = Vector{TFloat}(undef, n_degrees_of_freedom)
         delta_x = Vector{TFloat}(undef, n_degrees_of_freedom)
         rhs_delta = Vector{TFloat}(undef, n_degrees_of_freedom)
@@ -77,7 +78,7 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
                 nonlinear_max_iterations,
                 preconditioner_update_interval,
                 linear_rtol,
-                linear_atol, linear_restart,
+                linear_atol, krylov_subspace_max_size,
                 H, c, s, g, V,
                 residual, delta_x, rhs_delta, v, w,
                 NewtonKrylovDiagnostics())
@@ -86,7 +87,7 @@ end
 
 """
     newton_solve!(x, rhs_func!, nl_solver_params;
-                  left_preconditioner=nothing, right_preconditioner=nothing)
+                  left_preconditioner=(x) -> nothing, right_preconditioner=(x) -> nothing)
 
 `x` is the initial guess at the solution, and is overwritten by the result of the Newton
 solve.
@@ -160,56 +161,56 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
 
     residual_func!(residual, x)
     residual_norm = vector_norm(residual, norm_params...)
-    counter = 0
-    linear_counter = 0
+    newton_iterations = 0
+    GMRES_iterations = 0
 
     success = true
-    while (counter < 1 && residual_norm > 1.0e-8) || residual_norm > 1.0
-        counter += 1
+    while (newton_iterations < 1 && residual_norm > 1.0e-8) || residual_norm > 1.0
+        newton_iterations += 1
 
         # use the GMRES algoritm to find the approximate solution to:
         #   J δx = -RHS(x)
-        linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
+        krylov_subspace_size = linear_solve!(x, residual_func!, residual, delta_x, v, w,
                                    norm_params;
                                    rtol=nl_solver_params.linear_rtol,
                                    atol=nl_solver_params.linear_atol,
-                                   restart=nl_solver_params.linear_restart,
+                                   max_krylov_subspace_size=nl_solver_params.krylov_subspace_max_size,
                                    left_preconditioner=left_preconditioner,
                                    right_preconditioner=right_preconditioner,
                                    H=nl_solver_params.H, c=nl_solver_params.c,
                                    s=nl_solver_params.s, g=nl_solver_params.g,
                                    V=nl_solver_params.V, rhs_delta=nl_solver_params.rhs_delta)
-        linear_counter += linear_its
+        GMRES_iterations += krylov_subspace_size
 
         # calculate the residual for the NaN diagnostic check
         @. w = x + delta_x
         residual_func!(residual, w)
         residual_norm = vector_norm(residual, norm_params...)
         if isnan(residual_norm)
-            error("NaN in Newton iteration at iteration $counter")
+            error("NaN in Newton iteration at iteration $(newton_iterations)")
         end
         # update root estimate x_n+1 = x_n + delta_x
         @. x = w
 
-        if counter % nl_solver_params.preconditioner_update_interval == 0
+        if newton_iterations % nl_solver_params.preconditioner_update_interval == 0
             # Update the preconditioner to accelerate convergence
             recalculate_preconditioner()
         end
 
-        if counter > nl_solver_params.nonlinear_max_iterations
+        if newton_iterations > nl_solver_params.nonlinear_max_iterations
             println("maximum iteration limit reached")
             success = false
             break
         end
     end
     nl_solver_params.diagnostics.n_solves[] += 1
-    nl_solver_params.diagnostics.nonlinear_iterations[] += counter
-    nl_solver_params.diagnostics.linear_iterations[] += linear_counter
+    nl_solver_params.diagnostics.nonlinear_iterations[] += newton_iterations
+    nl_solver_params.diagnostics.linear_iterations[] += GMRES_iterations
     if diagnose
-        println("Newton iterations: ", counter)
+        println("Newton iterations: ", newton_iterations)
         println("Final residual: ", residual_norm)
-        println("Total linear iterations: ", linear_counter)
-        println("Linear iterations per Newton iteration: ", linear_counter / counter)
+        println("Total linear (GMRES) iterations: ", GMRES_iterations)
+        println("Linear (GMRES) iterations per Newton iteration: ", GMRES_iterations / newton_iterations)
         println()
     end
 
@@ -253,7 +254,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
 function linear_solve!(x::TVector, residual_func!::TResidual,
             residual0::TVector, delta_x::TVector, v::TVector, w::TVector,
-            norm_params; rtol, atol, restart,
+            norm_params; rtol, atol, max_krylov_subspace_size::Int64,
             left_preconditioner::TPreconditionerLeft,
             right_preconditioner::TPreconditionerRight,
             H::Array{TFloat,2}, c::TVector, s::TVector,
@@ -309,15 +310,12 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
     tol = max(rtol * beta, atol)
 
     residual = Inf
-    counter = 0
-    inner_counter = 0
+    krylov_subspace_size = 0
     # set H to zero to ensure lower-than-diagonal entries
     # of the upper Hessenberg matrix are zero
     @. H = 0.0
-    for i ∈ 1:restart
-        inner_counter = i
-        counter += 1
-        #println("Linear ", counter)
+    for i ∈ 1:max_krylov_subspace_size
+        krylov_subspace_size = i
 
         # Compute next Krylov vector
         for k in eachindex(w)
@@ -367,7 +365,7 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
             break
         end
     end
-    i = inner_counter
+    i = krylov_subspace_size
 
     # finally, compute delta_x
     #################################
@@ -379,7 +377,7 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
     calculate_delta_x(delta_x, V, y)
     right_preconditioner(delta_x)
 
-    return counter
+    return krylov_subspace_size
 end
 
 end
