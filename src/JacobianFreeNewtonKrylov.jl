@@ -19,6 +19,15 @@ module JacobianFreeNewtonKrylov
 export newton_solve!,
        NewtonKrylovSolverData
 
+struct NewtonKrylovDiagnostics
+    n_solves::Base.RefValue{Int64}
+    nonlinear_iterations::Base.RefValue{Int64}
+    linear_iterations::Base.RefValue{Int64}
+    function NewtonKrylovDiagnostics()
+        return new(Ref(0), Ref(0), Ref(0))
+    end
+end
+
 struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     rtol::TFloat
     atol::TFloat
@@ -32,14 +41,12 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     s::Array{TFloat,1}
     g::Array{TFloat,1}
     V::Array{TFloat,2}
-    n_solves::Base.RefValue{Int64}
-    nonlinear_iterations::Base.RefValue{Int64}
-    linear_iterations::Base.RefValue{Int64}
     residual::Vector{TFloat}
     delta_x::Vector{TFloat}
     rhs_delta::Vector{TFloat}
     v::Vector{TFloat}
     w::Vector{TFloat}
+    diagnostics::NewtonKrylovDiagnostics
     """
     """
     function NewtonKrylovSolverData(::Type{TFloat}, n_degrees_of_freedom::Int64;
@@ -71,8 +78,8 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
                 TFloat(linear_rtol),
                 TFloat(linear_atol), linear_restart,
                 H, c, s, g, V,
-                Ref(0), Ref(0), Ref(0),
-                residual, delta_x, rhs_delta, v, w)
+                residual, delta_x, rhs_delta, v, w,
+                NewtonKrylovDiagnostics())
     end
 end
 
@@ -194,9 +201,9 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
             break
         end
     end
-    nl_solver_params.n_solves[] += 1
-    nl_solver_params.nonlinear_iterations[] += counter
-    nl_solver_params.linear_iterations[] += linear_counter
+    nl_solver_params.diagnostics.n_solves[] += 1
+    nl_solver_params.diagnostics.nonlinear_iterations[] += counter
+    nl_solver_params.diagnostics.linear_iterations[] += linear_counter
     if diagnose
         println("Newton iterations: ", counter)
         println("Final residual: ", residual_norm)
