@@ -280,11 +280,8 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
     # by a large number `Jv_scale_factor` (in constrast to the small `epsilon` in the
     # 'usual' case where the norm does not include either reative or absolute tolerance)
     # to ensure that we get a reasonable estimate of J.v.
-    function approximate_Jacobian_vector_product!(v, skip_first_precon::Bool=false)
-        if !skip_first_precon
-            right_preconditioner(v)
-        end
-
+    function approximate_Jacobian_vector_product!(v::Vector{TFloat}) where TFloat <: AbstractFloat
+        right_preconditioner(v)
         @. v = x + Jv_scale_factor * v
         residual_func!(rhs_delta, v)
         @. v = (rhs_delta - residual0) * inv_Jv_scale_factor
