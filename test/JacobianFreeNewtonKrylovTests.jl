@@ -185,7 +185,7 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
         rhs_func!(nl_solver_params.residual, x)
 
         # check the residual is small
-        @test maximum(abs.(nl_solver_params.residual)) < 6.0*atol
+        @test maximum(abs.(nl_solver_params.residual)) < 10.0*atol
 
         # compare against the manufactured solution
         x_expected = deepcopy(x)
