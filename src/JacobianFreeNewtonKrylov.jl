@@ -35,8 +35,6 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     n_solves::Base.RefValue{Int64}
     nonlinear_iterations::Base.RefValue{Int64}
     linear_iterations::Base.RefValue{Int64}
-    max_nonlinear_iterations_this_step::Base.RefValue{Int64}
-    max_linear_iterations_this_step::Base.RefValue{Int64}
     residual::Vector{TFloat}
     delta_x::Vector{TFloat}
     rhs_delta::Vector{TFloat}
@@ -74,7 +72,6 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
                 TFloat(linear_atol), linear_restart,
                 H, c, s, g, V,
                 Ref(0), Ref(0), Ref(0),
-                Ref(0), Ref(0),
                 residual, delta_x, rhs_delta, v, w)
     end
 end
@@ -200,15 +197,11 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
     nl_solver_params.n_solves[] += 1
     nl_solver_params.nonlinear_iterations[] += counter
     nl_solver_params.linear_iterations[] += linear_counter
-    nl_solver_params.max_nonlinear_iterations_this_step[] =
-        max(counter, nl_solver_params.max_nonlinear_iterations_this_step[])
-    nl_solver_params.max_linear_iterations_this_step[] =
-        max(linear_counter, nl_solver_params.max_linear_iterations_this_step[])
     if diagnose
         println("Newton iterations: ", counter)
         println("Final residual: ", residual_norm)
         println("Total linear iterations: ", linear_counter)
-        println("Linear iterations per Newton: ", linear_counter / counter)
+        println("Linear iterations per Newton iteration: ", linear_counter / counter)
         println()
     end
 
