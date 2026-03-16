@@ -20,27 +20,25 @@ export reset_nonlinear_per_stage_counters!,
        newton_solve!,
        nl_solver_info
 
-jfnk_int = Int64
-
 struct nl_solver_info{TFloat <: AbstractFloat}
     rtol::TFloat
     atol::TFloat
-    nonlinear_max_iterations::jfnk_int
+    nonlinear_max_iterations::Int64
     linear_rtol::TFloat
     linear_atol::TFloat
-    linear_restart::jfnk_int
+    linear_restart::Int64
     H::Array{TFloat,2}
     c::Array{TFloat,1}
     s::Array{TFloat,1}
     g::Array{TFloat,1}
     V::Array{TFloat,2}
-    n_solves::Base.RefValue{jfnk_int}
-    nonlinear_iterations::Base.RefValue{jfnk_int}
-    linear_iterations::Base.RefValue{jfnk_int}
-    solves_since_precon_update::Base.RefValue{jfnk_int}
-    max_nonlinear_iterations_this_step::Base.RefValue{jfnk_int}
-    max_linear_iterations_this_step::Base.RefValue{jfnk_int}
-    preconditioner_update_interval::jfnk_int
+    n_solves::Base.RefValue{Int64}
+    nonlinear_iterations::Base.RefValue{Int64}
+    linear_iterations::Base.RefValue{Int64}
+    solves_since_precon_update::Base.RefValue{Int64}
+    max_nonlinear_iterations_this_step::Base.RefValue{Int64}
+    max_linear_iterations_this_step::Base.RefValue{Int64}
+    preconditioner_update_interval::Int64
     residual::Vector{TFloat}
     delta_x::Vector{TFloat}
     rhs_delta::Vector{TFloat}
