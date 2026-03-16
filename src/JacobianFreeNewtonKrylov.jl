@@ -159,26 +159,23 @@ iteration is therefore
 As the GMRES solve is only used to get the right `direction' for the next Newton step, it
 is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
-function newton_solve!(x::TVector, residual_func!::TFunc,
+function newton_solve!(x::TVector, residual_func!::TResidual,
             nl_solver_params::nl_solver_info;
-            left_preconditioner=nothing,
-            right_preconditioner=nothing,
-            recalculate_preconditioner=nothing,
+            left_preconditioner::TPreconditionerLeft=(x) -> nothing,
+            right_preconditioner::TPreconditionerRight=(x) -> nothing,
+            recalculate_preconditioner::TPreconditionerUpdate=() -> nothing,
             diagnose::Bool=false) where {
                 TVector <: AbstractArray{jfnk_float,1},
-                TFunc <: Function}
+                TResidual <: Function,
+                TPreconditionerLeft <: Function,
+                TPreconditionerRight <: Function,
+                TPreconditionerUpdate <: Function}
     rtol = nl_solver_params.rtol
     atol = nl_solver_params.atol
     residual = nl_solver_params.residual
     delta_x = nl_solver_params.delta_x
     v = nl_solver_params.v
     w = nl_solver_params.w
-    if left_preconditioner === nothing
-        left_preconditioner = identity
-    end
-    if right_preconditioner === nothing
-        right_preconditioner = identity
-    end
 
     norm_params = (nl_solver_params.rtol, nl_solver_params.atol, x)
 
@@ -215,7 +212,7 @@ function newton_solve!(x::TVector, residual_func!::TFunc,
         # update root estimate x_n+1 = x_n + delta_x
         @. x = w
 
-        if recalculate_preconditioner !== nothing && counter % nl_solver_params.preconditioner_update_interval == 0
+        if counter % nl_solver_params.preconditioner_update_interval == 0
             # Have taken a large number of Newton iterations already - convergence must be
             # slow, so try updating the preconditioner.
             recalculate_preconditioner()
