@@ -23,6 +23,7 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     rtol::TFloat
     atol::TFloat
     nonlinear_max_iterations::Int64
+    preconditioner_update_interval::Int64
     linear_rtol::TFloat
     linear_atol::TFloat
     linear_restart::Int64
@@ -36,7 +37,6 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     linear_iterations::Base.RefValue{Int64}
     max_nonlinear_iterations_this_step::Base.RefValue{Int64}
     max_linear_iterations_this_step::Base.RefValue{Int64}
-    preconditioner_update_interval::Int64
     residual::Vector{TFloat}
     delta_x::Vector{TFloat}
     rhs_delta::Vector{TFloat}
@@ -69,12 +69,12 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
         w = Vector{TFloat}(undef, n_degrees_of_freedom)
         return new{TFloat}(TFloat(rtol), TFloat(atol),
                 nonlinear_max_iterations,
+                preconditioner_update_interval,
                 TFloat(linear_rtol),
                 TFloat(linear_atol), linear_restart,
                 H, c, s, g, V,
                 Ref(0), Ref(0), Ref(0),
                 Ref(0), Ref(0),
-                preconditioner_update_interval,
                 residual, delta_x, rhs_delta, v, w)
     end
 end
