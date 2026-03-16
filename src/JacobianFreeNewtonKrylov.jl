@@ -51,16 +51,17 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     """
     function NewtonKrylovSolverData(::Type{TFloat}, n_degrees_of_freedom::Int64;
                                     # relative tolerance for convergence
-                                    rtol=1.0e-5,
+                                    rtol::TFloatTol=1.0e-5,
                                     # absolute tolerance for convergence
-                                    atol=1.0e-12,
+                                    atol::TFloatTol=1.0e-12,
                                     # max newton_solve! iterations
-                                    nonlinear_max_iterations=20,
-                                    linear_rtol=1.0e-3,
-                                    linear_atol=1.0,
+                                    nonlinear_max_iterations::Int64=20,
+                                    linear_rtol::TFloatTol=1.0e-3,
+                                    linear_atol::TFloatTol=1.0,
                                     # number of members of Krylov subspace
-                                    linear_restart=10,
-                                    preconditioner_update_interval=300) where TFloat <: AbstractFloat
+                                    linear_restart::Int64=10,
+                                    preconditioner_update_interval::Int64=300) where {
+                                        TFloat <: AbstractFloat, TFloatTol <: AbstractFloat}
         # buffer arrays for Newton-Krylov-GMRES solve
         H = Array{TFloat,2}(undef, linear_restart + 1, linear_restart)
         c = Array{TFloat,1}(undef, linear_restart + 1)
@@ -72,11 +73,11 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
         rhs_delta = Vector{TFloat}(undef, n_degrees_of_freedom)
         v = Vector{TFloat}(undef, n_degrees_of_freedom)
         w = Vector{TFloat}(undef, n_degrees_of_freedom)
-        return new{TFloat}(TFloat(rtol), TFloat(atol),
+        return new{TFloat}(rtol, atol,
                 nonlinear_max_iterations,
                 preconditioner_update_interval,
-                TFloat(linear_rtol),
-                TFloat(linear_atol), linear_restart,
+                linear_rtol,
+                linear_atol, linear_restart,
                 H, c, s, g, V,
                 residual, delta_x, rhs_delta, v, w,
                 NewtonKrylovDiagnostics())
@@ -216,12 +217,12 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
 end
 
 function vector_norm(residual::Array{TFloat, 1},
-                               rtol, atol, x) where TFloat <: AbstractFloat
+            rtol::TFloat, atol::TFloat, x::Vector{TFloat}) where TFloat <: AbstractFloat
     return sqrt(vector_dot_product(residual, residual, rtol, atol, x))
 end
 
 function vector_dot_product(v::Array{TFloat, 1}, w::Array{TFloat, 1},
-                  rtol, atol, x) where TFloat <: AbstractFloat
+            rtol::TFloat, atol::TFloat, x::Vector{TFloat}) where TFloat <: AbstractFloat
     dot_product = 0.0
     for i ∈ eachindex(v,w)
         dot_product += v[i] * w[i] / abs2(rtol * abs(x[i]) + atol)
@@ -230,7 +231,8 @@ function vector_dot_product(v::Array{TFloat, 1}, w::Array{TFloat, 1},
     return dot_product
 end
 
-function calculate_delta_x(delta_x::Array{TFloat, 1}, V, y) where TFloat <: AbstractFloat
+function calculate_delta_x(delta_x::Array{TFloat, 1},
+            V::Array{TFloat,2}, y::Vector{TFloat}) where TFloat <: AbstractFloat
     @. delta_x = 0.0
     for iy in eachindex(y)
         for icoord in eachindex(delta_x)
@@ -249,10 +251,18 @@ which allows conveniently finding the residual at each step, and computing the f
 solution, without calculating a least-squares minimisation at each step. See 'algorithm 2
 MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
-function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
-                    norm_params; rtol, atol, restart,
-                    left_preconditioner, right_preconditioner, H, c, s, g, V,
-                    rhs_delta)
+function linear_solve!(x::TVector, residual_func!::TResidual,
+            residual0::TVector, delta_x::TVector, v::TVector, w::TVector,
+            norm_params; rtol, atol, restart,
+            left_preconditioner::TPreconditionerLeft,
+            right_preconditioner::TPreconditionerRight,
+            H::Array{TFloat,2}, c::TVector, s::TVector,
+            g::TVector, V::Array{TFloat,2}, rhs_delta::TVector) where {
+                        TFloat <: AbstractFloat,
+                        TVector <: Vector{TFloat},
+                        TResidual <: Function,
+                        TPreconditionerLeft <: Function,
+                        TPreconditionerRight <: Function}
     # use the GMRES algoritm to find the approximate solution to:
     #   J δx = residual0
 
