@@ -61,7 +61,7 @@ function linear_test(; n=16, max_nkrylov = 12, atol=1.0e-13, atol_expected=1.0e-
         # initial guess (respects b.c. x[1] = x[n] = 1.0)
         x .= 1.0
 
-        nl_solver_params = nl_solver_info(
+        nl_solver_params = NewtonKrylovSolverData(
             typeof(x[1]), length(x),
             rtol = 0.0,
             atol = atol,
@@ -172,7 +172,7 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
             right_preconditioner = identity
         end
 
-        nl_solver_params = nl_solver_info(
+        nl_solver_params = NewtonKrylovSolverData(
             typeof(x[1]), length(x),
             rtol = 0.0,
             atol = atol,

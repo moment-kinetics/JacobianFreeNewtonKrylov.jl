@@ -16,11 +16,10 @@ Useful references:
 """
 module JacobianFreeNewtonKrylov
 
-export reset_nonlinear_per_stage_counters!,
-       newton_solve!,
-       nl_solver_info
+export newton_solve!,
+       NewtonKrylovSolverData
 
-struct nl_solver_info{TFloat <: AbstractFloat}
+struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     rtol::TFloat
     atol::TFloat
     nonlinear_max_iterations::Int64
@@ -46,7 +45,7 @@ struct nl_solver_info{TFloat <: AbstractFloat}
     w::Vector{TFloat}
     """
     """
-    function nl_solver_info(::Type{TFloat}, n_degrees_of_freedom::Int64;
+    function NewtonKrylovSolverData(::Type{TFloat}, n_degrees_of_freedom::Int64;
                                     # relative tolerance for convergence
                                     rtol=1.0e-5,
                                     # absolute tolerance for convergence
@@ -80,27 +79,6 @@ struct nl_solver_info{TFloat <: AbstractFloat}
                 preconditioner_update_interval,
                 residual, delta_x, rhs_delta, v, w)
     end
-end
-
-"""
-    reset_nonlinear_per_stage_counters!(nl_solver_params::Union{nl_solver_info,Nothing})
-
-Reset the counters that hold per-step totals or maximums in `nl_solver_params`.
-
-Also increment `nl_solver_params.stage_counter[]`.
-"""
-function reset_nonlinear_per_stage_counters!(nl_solver_params::Union{nl_solver_info,Nothing})
-    if nl_solver_params === nothing
-        return nothing
-    end
-
-    nl_solver_params.max_nonlinear_iterations_this_step[] = 0
-    nl_solver_params.max_linear_iterations_this_step[] = 0
-
-    # Also increment the stage counter
-    nl_solver_params.solves_since_precon_update[] += 1
-
-    return nothing
 end
 
 """
@@ -157,7 +135,7 @@ As the GMRES solve is only used to get the right `direction' for the next Newton
 is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
 function newton_solve!(x::TVector, residual_func!::TResidual,
-            nl_solver_params::nl_solver_info;
+            nl_solver_params::NewtonKrylovSolverData{TFloat};
             left_preconditioner::TPreconditionerLeft=(x) -> nothing,
             right_preconditioner::TPreconditionerRight=(x) -> nothing,
             recalculate_preconditioner::TPreconditionerUpdate=() -> nothing,
