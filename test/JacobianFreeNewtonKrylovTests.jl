@@ -62,7 +62,7 @@ function linear_test(; n=16, max_nkrylov = 12, atol=1.0e-13, atol_expected=1.0e-
         x .= 1.0
 
         nl_solver_params = nl_solver_info(
-            length(x),
+            typeof(x[1]), length(x),
             rtol = 0.0,
             atol = atol,
             linear_restart = restart,
@@ -173,7 +173,7 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
         end
 
         nl_solver_params = nl_solver_info(
-            length(x),
+            typeof(x[1]), length(x),
             rtol = 0.0,
             atol = atol,
             linear_restart = restart,

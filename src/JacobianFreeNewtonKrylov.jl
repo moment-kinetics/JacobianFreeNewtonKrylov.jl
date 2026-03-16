@@ -19,22 +19,21 @@ module JacobianFreeNewtonKrylov
 export reset_nonlinear_per_stage_counters!,
        newton_solve!,
        nl_solver_info
-# promote type to user defined function?
-jfnk_float = Float64
+
 jfnk_int = Int64
 
-struct nl_solver_info
-    rtol::jfnk_float
-    atol::jfnk_float
+struct nl_solver_info{TFloat <: AbstractFloat}
+    rtol::TFloat
+    atol::TFloat
     nonlinear_max_iterations::jfnk_int
-    linear_rtol::jfnk_float
-    linear_atol::jfnk_float
+    linear_rtol::TFloat
+    linear_atol::TFloat
     linear_restart::jfnk_int
-    H::Array{jfnk_float,2}
-    c::Array{jfnk_float,1}
-    s::Array{jfnk_float,1}
-    g::Array{jfnk_float,1}
-    V::Array{jfnk_float,2}
+    H::Array{TFloat,2}
+    c::Array{TFloat,1}
+    s::Array{TFloat,1}
+    g::Array{TFloat,1}
+    V::Array{TFloat,2}
     n_solves::Base.RefValue{jfnk_int}
     nonlinear_iterations::Base.RefValue{jfnk_int}
     linear_iterations::Base.RefValue{jfnk_int}
@@ -42,14 +41,14 @@ struct nl_solver_info
     max_nonlinear_iterations_this_step::Base.RefValue{jfnk_int}
     max_linear_iterations_this_step::Base.RefValue{jfnk_int}
     preconditioner_update_interval::jfnk_int
-    residual::Vector{jfnk_float}
-    delta_x::Vector{jfnk_float}
-    rhs_delta::Vector{jfnk_float}
-    v::Vector{jfnk_float}
-    w::Vector{jfnk_float}
+    residual::Vector{TFloat}
+    delta_x::Vector{TFloat}
+    rhs_delta::Vector{TFloat}
+    v::Vector{TFloat}
+    w::Vector{TFloat}
     """
     """
-    function nl_solver_info(n_degrees_of_freedom;
+    function nl_solver_info(::Type{TFloat}, n_degrees_of_freedom::Int64;
                                     # relative tolerance for convergence
                                     rtol=1.0e-5,
                                     # absolute tolerance for convergence
@@ -60,22 +59,22 @@ struct nl_solver_info
                                     linear_atol=1.0,
                                     # number of members of Krylov subspace
                                     linear_restart=10,
-                                    preconditioner_update_interval=300)
+                                    preconditioner_update_interval=300) where TFloat <: AbstractFloat
         # buffer arrays for Newton-Krylov-GMRES solve
-        H = Array{jfnk_float,2}(undef, linear_restart + 1, linear_restart)
-        c = Array{jfnk_float,1}(undef, linear_restart + 1)
-        s = Array{jfnk_float,1}(undef, linear_restart + 1)
-        g = Array{jfnk_float,1}(undef, linear_restart + 1)
-        V = Array{jfnk_float,2}(undef, n_degrees_of_freedom, linear_restart+1)
-        residual = Vector{jfnk_float}(undef, n_degrees_of_freedom)
-        delta_x = Vector{jfnk_float}(undef, n_degrees_of_freedom)
-        rhs_delta = Vector{jfnk_float}(undef, n_degrees_of_freedom)
-        v = Vector{jfnk_float}(undef, n_degrees_of_freedom)
-        w = Vector{jfnk_float}(undef, n_degrees_of_freedom)
-        return new(jfnk_float(rtol), jfnk_float(atol),
+        H = Array{TFloat,2}(undef, linear_restart + 1, linear_restart)
+        c = Array{TFloat,1}(undef, linear_restart + 1)
+        s = Array{TFloat,1}(undef, linear_restart + 1)
+        g = Array{TFloat,1}(undef, linear_restart + 1)
+        V = Array{TFloat,2}(undef, n_degrees_of_freedom, linear_restart+1)
+        residual = Vector{TFloat}(undef, n_degrees_of_freedom)
+        delta_x = Vector{TFloat}(undef, n_degrees_of_freedom)
+        rhs_delta = Vector{TFloat}(undef, n_degrees_of_freedom)
+        v = Vector{TFloat}(undef, n_degrees_of_freedom)
+        w = Vector{TFloat}(undef, n_degrees_of_freedom)
+        return new{TFloat}(TFloat(rtol), TFloat(atol),
                 nonlinear_max_iterations,
-                jfnk_float(linear_rtol),
-                jfnk_float(linear_atol), linear_restart,
+                TFloat(linear_rtol),
+                TFloat(linear_atol), linear_restart,
                 H, c, s, g, V,
                 Ref(0), Ref(0), Ref(0),
                 Ref(preconditioner_update_interval),
@@ -165,7 +164,8 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
             right_preconditioner::TPreconditionerRight=(x) -> nothing,
             recalculate_preconditioner::TPreconditionerUpdate=() -> nothing,
             diagnose::Bool=false) where {
-                TVector <: AbstractArray{jfnk_float,1},
+                TFloat <: AbstractFloat,
+                TVector <: AbstractArray{TFloat,1},
                 TResidual <: Function,
                 TPreconditionerLeft <: Function,
                 TPreconditionerRight <: Function,
@@ -213,8 +213,7 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
         @. x = w
 
         if counter % nl_solver_params.preconditioner_update_interval == 0
-            # Have taken a large number of Newton iterations already - convergence must be
-            # slow, so try updating the preconditioner.
+            # Update the preconditioner to accelerate convergence
             recalculate_preconditioner()
         end
 
@@ -242,13 +241,13 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
     return success
 end
 
-function vector_norm(residual::Array{jfnk_float, 1},
-                               rtol, atol, x)
+function vector_norm(residual::Array{TFloat, 1},
+                               rtol, atol, x) where TFloat <: AbstractFloat
     return sqrt(vector_dot_product(residual, residual, rtol, atol, x))
 end
 
-function vector_dot_product(v::Array{jfnk_float, 1}, w::Array{jfnk_float, 1},
-                  rtol, atol, x)
+function vector_dot_product(v::Array{TFloat, 1}, w::Array{TFloat, 1},
+                  rtol, atol, x) where TFloat <: AbstractFloat
     dot_product = 0.0
     for i ∈ eachindex(v,w)
         dot_product += v[i] * w[i] / abs2(rtol * abs(x[i]) + atol)
@@ -257,7 +256,7 @@ function vector_dot_product(v::Array{jfnk_float, 1}, w::Array{jfnk_float, 1},
     return dot_product
 end
 
-function calculate_delta_x(delta_x::Array{jfnk_float, 1}, V, y)
+function calculate_delta_x(delta_x::Array{TFloat, 1}, V, y) where TFloat <: AbstractFloat
     @. delta_x = 0.0
     for iy in eachindex(y)
         for icoord in eachindex(delta_x)
@@ -325,7 +324,6 @@ function linear_solve!(x, residual_func!, residual0, delta_x, v, w,
     # so small that it is smaller than atol, in which case use atol instead.
     tol = max(rtol * beta, atol)
 
-    lsq_result = nothing
     residual = Inf
     counter = 0
     inner_counter = 0
