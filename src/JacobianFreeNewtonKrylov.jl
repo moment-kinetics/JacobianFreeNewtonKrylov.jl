@@ -94,9 +94,9 @@ solve.
 
 `rhs_func!(residual, x)` is the function we are trying to find a solution of. It calculates
 ```math
-\\mathtt{residual} = F(\\mathtt{x})
+\\mathtt{residual} = R(\\mathtt{x})
 ```
-where we are trying to solve \$F(x)=0\$.
+where we are trying to solve \$R(x)=0\$.
 
 `left_preconditioner` or `right_preconditioner` apply preconditioning. They should be
 passed a function that solves \$P.x = b\$ where \$P\$ is the preconditioner matrix, \$b\$
