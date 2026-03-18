@@ -46,6 +46,7 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     rhs_delta::Vector{TFloat}
     v::Vector{TFloat}
     w::Vector{TFloat}
+    weight::Vector{TFloat}
     diagnostics::NewtonKrylovDiagnostics
     """
     """
@@ -74,13 +75,14 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
         rhs_delta = Vector{TFloat}(undef, n_degrees_of_freedom)
         v = Vector{TFloat}(undef, n_degrees_of_freedom)
         w = Vector{TFloat}(undef, n_degrees_of_freedom)
+        weight = Vector{TFloat}(undef, n_degrees_of_freedom)
         return new{TFloat}(rtol, atol,
                 nonlinear_max_iterations,
                 preconditioner_update_interval,
                 linear_rtol,
                 linear_atol, krylov_subspace_max_size,
                 H, c, s, g, V,
-                residual, delta_x, rhs_delta, v, w,
+                residual, delta_x, rhs_delta, v, w, weight,
                 NewtonKrylovDiagnostics())
     end
 end
@@ -156,11 +158,12 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
     delta_x = nl_solver_params.delta_x
     v = nl_solver_params.v
     w = nl_solver_params.w
+    weight = nl_solver_params.weight
 
-    norm_params = (nl_solver_params.rtol, nl_solver_params.atol, x)
+    calculate_weight!(weight, nl_solver_params.atol, nl_solver_params.rtol, x)
 
     residual_func!(residual, x)
-    residual_norm = vector_norm(residual, norm_params...)
+    residual_norm = vector_norm(residual, weight)
     newton_iterations = 0
     GMRES_iterations = 0
 
@@ -170,10 +173,9 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
 
         # use the GMRES algoritm to find the approximate solution to:
         #   J δx = -RHS(x)
-        krylov_subspace_size = linear_solve!(x, residual_func!, residual, delta_x, v, w,
-                                   norm_params;
-                                   rtol=nl_solver_params.linear_rtol,
-                                   atol=nl_solver_params.linear_atol,
+        krylov_subspace_size = linear_solve!(x, residual_func!, residual, delta_x, v, w, weight;
+                                   GMRES_rtol=nl_solver_params.linear_rtol,
+                                   GMRES_atol=nl_solver_params.linear_atol,
                                    max_krylov_subspace_size=nl_solver_params.krylov_subspace_max_size,
                                    left_preconditioner=left_preconditioner,
                                    right_preconditioner=right_preconditioner,
@@ -185,12 +187,16 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
         # calculate the residual for the NaN diagnostic check
         @. w = x + delta_x
         residual_func!(residual, w)
-        residual_norm = vector_norm(residual, norm_params...)
+        residual_norm = vector_norm(residual, weight)
         if isnan(residual_norm)
             error("NaN in Newton iteration at iteration $(newton_iterations)")
         end
+
         # update root estimate x_n+1 = x_n + delta_x
         @. x = w
+
+        # update the weight for the inner product
+        calculate_weight!(weight, nl_solver_params.atol, nl_solver_params.rtol, x)
 
         if newton_iterations % nl_solver_params.preconditioner_update_interval == 0
             # Update the preconditioner to accelerate convergence
@@ -217,16 +223,25 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
     return success
 end
 
+function calculate_weight!(weight::Vector{TFloat},
+            atol::TFloat, rtol::TFloat, solution_vector_x::Vector{TFloat})  where TFloat <: AbstractFloat
+    for i in eachindex(solution_vector_x,weight)
+        weight[i] = 1.0 / abs2(rtol * abs(solution_vector_x[i]) + atol)
+    end
+    normalisation = sum(weight)
+    #@. weight /= normalisation
+    return nothing
+end
 function vector_norm(residual::Array{TFloat, 1},
-            rtol::TFloat, atol::TFloat, x::Vector{TFloat}) where TFloat <: AbstractFloat
-    return sqrt(vector_dot_product(residual, residual, rtol, atol, x))
+            weight::Vector{TFloat}) where TFloat <: AbstractFloat
+    return sqrt(vector_dot_product(residual, residual, weight))
 end
 
 function vector_dot_product(v::Array{TFloat, 1}, w::Array{TFloat, 1},
-            rtol::TFloat, atol::TFloat, x::Vector{TFloat}) where TFloat <: AbstractFloat
+            weight::Vector{TFloat}) where TFloat <: AbstractFloat
     dot_product = 0.0
-    for i ∈ eachindex(v,w)
-        dot_product += v[i] * w[i] / abs2(rtol * abs(x[i]) + atol)
+    for i in eachindex(v,w)
+        dot_product += v[i] * w[i] * weight[i]
     end
     dot_product = dot_product / length(v)
     return dot_product
@@ -254,7 +269,7 @@ MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
 function linear_solve!(x::TVector, residual_func!::TResidual,
             residual0::TVector, delta_x::TVector, v::TVector, w::TVector,
-            norm_params; rtol, atol, max_krylov_subspace_size::Int64,
+            weight::TVector; GMRES_rtol::TFloat, GMRES_atol::TFloat, max_krylov_subspace_size::Int64,
             left_preconditioner::TPreconditionerLeft,
             right_preconditioner::TPreconditionerRight,
             H::Array{TFloat,2}, c::TVector, s::TVector,
@@ -273,20 +288,20 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
     #  (R(x + δ.v ) - R(x))/δ = J.v + O(δ.v)
     #
     # In the standard GMRES method where the vector v has entries of order unity,
-    # v being computed from a vector u by `v = u / vector_norm(u, norm_params...)`.
+    # v being computed from a vector u by `v = u / vector_norm(u, weight)`.
     # The number δ should be << 1, but not so small as to cause rounding errors when
     # evaluating R(x + δ.v) - R(x). A suitable choice for for δ in these circumstances is
     # δ = `sqrt(eps())`, where `eps()` is machine precision for the floating point type.
     #
     # However, here we use the weighted GMRES method, and v is normalised with a large weight
     # in the definition of `vector_norm()` such that the entries of
-    # `v = u / vector_norm(u, norm_params...)` are small.
+    # `v = u / vector_norm(u, weight)` are small.
     # To avoid possible rounding errors from a very small δ.v, we need to choose
-    # δ = `sqrt(eps())*vector_norm(ones(TFloat,length(x)), norm_params...)`
+    # δ = `sqrt(eps())*vector_norm(ones(TFloat,length(x)), weight)`
     # so that the large weight in the normalisation of v is cancelled out.
     #
     # We define δ = `Jv_scale_factor` below
-    Jv_scale_factor = sqrt(eps(TFloat))*vector_norm(ones(TFloat,length(x)), norm_params...) #1.0e3
+    Jv_scale_factor = sqrt(eps(TFloat))*vector_norm(ones(TFloat,length(x)), weight) #1.0e3
     inv_Jv_scale_factor = 1.0 / Jv_scale_factor
     # the function computing J.v = ( R(x + δ.v) - R(x))/ δ
     function approximate_Jacobian_vector_product!(v::Vector{TFloat}) where TFloat <: AbstractFloat
@@ -305,7 +320,7 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
     @. w = -v
-    beta = vector_norm(w, norm_params...)
+    beta = vector_norm(w, weight)
     for i in eachindex(w)
         V[i,1] = w[i]/beta
     end
@@ -313,7 +328,7 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
 
     # Set tolerance for GMRES iteration to rtol times the initial residual, unless this is
     # so small that it is smaller than atol, in which case use atol instead.
-    tol = max(rtol * beta, atol)
+    tol = max(GMRES_rtol * beta, GMRES_atol)
 
     krylov_subspace_size = 0
     # set H to zero to ensure lower-than-diagonal entries
@@ -334,7 +349,7 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
             for k in eachindex(v)
                 v[k] = V[k,j]
             end
-            w_dot_Vj = vector_dot_product(w, v, norm_params...)
+            w_dot_Vj = vector_dot_product(w, v, weight)
 
             H[j,i] = w_dot_Vj
 
@@ -342,7 +357,7 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
                 w[k] = w[k] - H[j,i] * V[k,j]
             end
         end
-        norm_w = vector_norm(w, norm_params...)
+        norm_w = vector_norm(w, weight)
 
         H[i+1,i] = norm_w
 
