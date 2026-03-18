@@ -267,19 +267,28 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
     # use the GMRES algoritm to find the approximate solution to:
     #   J δx = residual0
 
-    Jv_scale_factor = 1.0e3
+    # We calculate the product J.v by finite difference using the relation
+    #  J.v = ( R(x + δ.v) - R(x))/ δ
+    # for δ a suitably chosen number such that
+    #  (R(x + δ.v ) - R(x))/δ = J.v + O(δ.v)
+    #
+    # In the standard GMRES method where the vector v has entries of order unity,
+    # v being computed from a vector u by `v = u / vector_norm(u, norm_params...)`.
+    # The number δ should be << 1, but not so small as to cause rounding errors when
+    # evaluating R(x + δ.v) - R(x). A suitable choice for for δ in these circumstances is
+    # δ = `sqrt(eps())`, where `eps()` is machine precision for the floating point type.
+    #
+    # However, here we use the weighted GMRES method, and v is normalised with a large weight
+    # in the definition of `vector_norm()` such that the entries of
+    # `v = u / vector_norm(u, norm_params...)` are small.
+    # To avoid possible rounding errors from a very small δ.v, we need to choose
+    # δ = `sqrt(eps())*vector_norm(ones(TFloat,length(x)), norm_params...)`
+    # so that the large weight in the normalisation of v is cancelled out.
+    #
+    # We define δ = `Jv_scale_factor` below
+    Jv_scale_factor = sqrt(eps(TFloat))*vector_norm(ones(TFloat,length(x)), norm_params...) #1.0e3
     inv_Jv_scale_factor = 1.0 / Jv_scale_factor
-
-    # The vectors `v` that are passed to this function will be normalised so that
-    # `vector_norm(v) == 1.0`. `vector_norm()` is defined - including the
-    # relative and absolute tolerances from the Newton iteration - so that a vector with a
-    # norm of 1.0 is 'small' in the sense that a vector with a norm of 1.0 is small enough
-    # relative to `x` to consider the iteration converged. This means that `x+v` would be
-    # very close to `x`, so R(x+v)-R(x) would be likely to be badly affected by rounding
-    # errors, because `v` is so small, relative to `x`. We actually want to multiply `v`
-    # by a large number `Jv_scale_factor` (in constrast to the small `epsilon` in the
-    # 'usual' case where the norm does not include either reative or absolute tolerance)
-    # to ensure that we get a reasonable estimate of J.v.
+    # the function computing J.v = ( R(x + δ.v) - R(x))/ δ
     function approximate_Jacobian_vector_product!(v::Vector{TFloat}) where TFloat <: AbstractFloat
         right_preconditioner(v)
         @. v = x + Jv_scale_factor * v
