@@ -228,8 +228,8 @@ function calculate_weight!(weight::Vector{TFloat},
     for i in eachindex(solution_vector_x,weight)
         weight[i] = 1.0 / abs2(rtol * abs(solution_vector_x[i]) + atol)
     end
-    normalisation = sum(weight)
-    #@. weight /= normalisation
+    # normalisation = length(weight)/sum(weight)
+    # @. weight *= normalisation
     return nothing
 end
 function vector_norm(residual::Array{TFloat, 1},
