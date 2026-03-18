@@ -306,7 +306,6 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
     # so small that it is smaller than atol, in which case use atol instead.
     tol = max(rtol * beta, atol)
 
-    residual = Inf
     krylov_subspace_size = 0
     # set H to zero to ensure lower-than-diagonal entries
     # of the upper Hessenberg matrix are zero
