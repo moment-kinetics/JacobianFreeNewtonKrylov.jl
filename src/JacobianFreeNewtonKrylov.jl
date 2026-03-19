@@ -1,18 +1,31 @@
 """
-A module implementing a Jacobian-free Newton-Krylov method for solving nonlinear systems in serial.
+A package implementing a Jacobian-free Newton-Krylov method [1-3] for solving nonlinear systems in serial.
 
-This class of solvers use an outer Newton iteration. Each step of the Newton iteration requires a
-linear solve of the Jacobian. An 'inexact Jacobian' method is used, and the GMRES method
-(GMRES is a type of Krylov solver) is used to (approximately) solve the (approximate)
-linear system.
+This class of solvers use an outer Newton iteration to solve the system
+   R(x) = 0,
+where R is the residual function and x is the solution vector.
+Each step of the Newton iteration requires a solution to the linearised system
+   J.δx = -R(x^n)
+for the nth iteration of the solution vector x^n, where J = δR/δx is the Jacobian.
+Here, we use the (weighted) GMRES method [4-7] to solve the linear system,
+which is a method that uses the Krylov subspace to obtain a solution
+without an explicit expression for J. Instead, GMRES computes the δx which minimises
+    r = || J.δx + R(x^n) ||
+For this method, only the product J.v for a vector v is required.
+We compute this product using the finite difference
+    J.v = (R(x + e.v) - R(x))/e + O(e.v)
+for e a suitably sized number for the estimate
+    O(e.v) << J.v
+to hold.
 
 Useful references:
-[1] V.A. Mousseau and D.A. Knoll, "Fully Implicit Kinetic Solution of Collisional Plasmas", Journal of Computational Physics 136, 308–323 (1997), https://doi.org/10.1006/jcph.1997.5736.
-[2] V.A. Mousseau, "Fully Implicit Kinetic Modelling of Collisional Plasmas", PhD thesis, Idaho National Engineering Laboratory (1996), https://inis.iaea.org/collection/NCLCollectionStore/_Public/27/067/27067141.pdf.
-[3] https://en.wikipedia.org/wiki/Generalized_minimal_residual_method
-[4] https://www.rikvoorhaar.com/blog/gmres
-[5] E. Carson , J. Liesen, Z. Strakoš, "Towards understanding CG and GMRES through examples", Linear Algebra and its Applications 692, 241–291 (2024), https://doi.org/10.1016/j.laa.2024.04.003.
-[6] Q. Zou, "GMRES algorithms over 35 years", Applied Mathematics and Computation 445, 127869 (2023), https://doi.org/10.1016/j.amc.2023.127869
+[1] D.A. Knoll, D.E. Keyes, "Jacobian-free Newton–Krylov methods: a survey of approaches and applications", Journal of Computational Physics, Volume 193, 2004, Pages 357-397, https://doi.org/10.1016/j.jcp.2003.08.010.
+[2] V.A. Mousseau and D.A. Knoll, "Fully Implicit Kinetic Solution of Collisional Plasmas", Journal of Computational Physics 136, 308–323 (1997), https://doi.org/10.1006/jcph.1997.5736.
+[3] V.A. Mousseau, "Fully Implicit Kinetic Modelling of Collisional Plasmas", PhD thesis, Idaho National Engineering Laboratory (1996), https://inis.iaea.org/collection/NCLCollectionStore/_Public/27/067/27067141.pdf.
+[4] https://en.wikipedia.org/wiki/Generalized_minimal_residual_method
+[5] https://www.rikvoorhaar.com/blog/gmres
+[6] E. Carson , J. Liesen, Z. Strakoš, "Towards understanding CG and GMRES through examples", Linear Algebra and its Applications 692, 241–291 (2024), https://doi.org/10.1016/j.laa.2024.04.003.
+[7] Q. Zou, "GMRES algorithms over 35 years", Applied Mathematics and Computation 445, 127869 (2023), https://doi.org/10.1016/j.amc.2023.127869
 """
 module JacobianFreeNewtonKrylov
 
@@ -57,7 +70,10 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
                                     atol::TFloatTol=1.0e-12,
                                     # max newton_solve! iterations
                                     nonlinear_max_iterations::Int64=20,
-                                    # tolerance for GMRES linear solve
+                                    # tolerance for GMRES linear solve, relative to the residual_norm
+                                    # which is weighted with 1/(atol + rtol |x|), with x the solution vector.
+                                    # GMRES_atol = 1 implies that the GMRES linear solve converges to
+                                    # the same precision as the final Newton iteration.
                                     linear_rtol::TFloatTol=1.0e-3,
                                     linear_atol::TFloatTol=1.0,
                                     # (maximum) number of members of Krylov subspace in GMRES solve
@@ -112,18 +128,8 @@ Note that the meaning of the relative tolerance `rtol` and absolute tolerance `a
 very different for the outer Newton iteration and the inner GMRES iteration.
 
 For the outer Newton iteration the residual \$R(x^n)\$ measures the departure of the
-system from the solution (at each grid point). Its size can be compared to the size of the
-solution `x`, so it makes sense to define an `error norm' for \$R(x^n)\$ as
-```math
-E(x^n) = \\left\\lVert \\frac{R(x^n)}{\\mathtt{rtol} x^n \\mathtt{atol}} \\right\\rVert_2
-```
-where \$\\left\\lVert \\cdot \\right\\rVert\$ is the 'L2 norm' (square-root of sum of
-squares). We can further try to define a grid-size independent error norm by dividing out
-the number of grid points to get a root-mean-square (RMS) error rather than an L2 norm.
-```math
-E_{\\mathrm{RMS}}(x^n) = \\sqrt{ \\frac{1}{N} \\sum_i \\frac{R(x^n)_i}{\\mathtt{rtol} x^n_i \\mathtt{atol}} }
-```
-where \$N\$ is the total number of grid points.
+system from the solution with a weight `rtol` that weights the residual with a relative
+error compared to the solution at each grid point, and an absolute tolerance `atol`.
 
 In contrast, GMRES is constructed to minimise the L2 norm of \$r_k = b - A\\cdot x_k\$
 where GMRES is solving the linear system \$A\\cdot x = b\$, \$x_k\$ is the approximation
@@ -137,8 +143,6 @@ iteration is therefore
 ```
 \\left\\lVert r_k \\right\\rVert < \\max(\\mathtt{linear\\_rtol} \\left\\lVert r_0 \\right\\rVert, \\mathtt{linear\\_atol}) = \\max(\\mathtt{linear\\_rtol} \\left\\lVert b \\right\\rVert, \\mathtt{linear\\_atol})
 ```
-As the GMRES solve is only used to get the right `direction' for the next Newton step, it
-is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
 function newton_solve!(solution_vector_x::TVector, residual_func!::TResidual,
             nl_solver_params::NewtonKrylovSolverData{TFloat};
@@ -160,13 +164,15 @@ function newton_solve!(solution_vector_x::TVector, residual_func!::TResidual,
     w = nl_solver_params.w
     weight = nl_solver_params.weight
 
+    # N.B. the weights are proportional to 1/(atol + rtol * |x|)^2
     calculate_weight!(weight, nl_solver_params.atol, nl_solver_params.rtol, solution_vector_x)
-
     residual_func!(residual, solution_vector_x)
+    # N.B. because weights ~ 1/(atol + rtol * |x|)^2 the size of the residual norm
+    # is residual_norm ~ 1/(atol + rtol * |x|) >> 1 for the initial guess and
+    # residual_norm ~ 1 for the converged solution vector x
     residual_norm = vector_norm(residual, weight)
     newton_iterations = 0
     GMRES_iterations = 0
-
     success = true
     while residual_norm > 1.0
         newton_iterations += 1
@@ -214,7 +220,7 @@ function newton_solve!(solution_vector_x::TVector, residual_func!::TResidual,
     nl_solver_params.diagnostics.linear_iterations[] += GMRES_iterations
     if diagnose
         println("Newton iterations: ", newton_iterations)
-        println("Final residual: ", residual_norm)
+        println("Final residual_norm: ", residual_norm)
         println("Total linear (GMRES) iterations: ", GMRES_iterations)
         println("Linear (GMRES) iterations per Newton iteration: ", GMRES_iterations / newton_iterations)
         println()
@@ -283,27 +289,27 @@ function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
     #   J δx = residual0
 
     # We calculate the product J.v by finite difference using the relation
-    #  J.v = ( R(x + δ.v) - R(x))/ δ
-    # for δ a suitably chosen number such that
-    #  (R(x + δ.v ) - R(x))/δ = J.v + O(δ.v)
+    #  J.v = ( R(x + e.v) - R(x))/ e
+    # for e a suitably chosen number such that
+    #  (R(x + e.v ) - R(x))/e = J.v + O(e.v)
     #
     # In the standard GMRES method where the vector v has entries of order unity,
     # v being computed from a vector u by `v = u / vector_norm(u, weight)`.
-    # The number δ should be << 1, but not so small as to cause rounding errors when
-    # evaluating R(x + δ.v) - R(x). A suitable choice for for δ in these circumstances is
-    # δ = `sqrt(eps())`, where `eps()` is machine precision for the floating point type.
+    # The number e should be << 1, but not so small as to cause rounding errors when
+    # evaluating R(x + e.v) - R(x). A suitable choice for for e in these circumstances is
+    # e = `sqrt(eps())`, where `eps()` is machine precision for the floating point type.
     #
     # However, here we use the weighted GMRES method, and v is normalised with a large weight
     # in the definition of `vector_norm()` such that the entries of
     # `v = u / vector_norm(u, weight)` are small.
-    # To avoid possible rounding errors from a very small δ.v, we need to choose
-    # δ = `sqrt(eps())*vector_norm(ones(TFloat,length(x)), weight)`
+    # To avoid possible rounding errors from a very small e.v, we need to choose
+    # e = `sqrt(eps())*vector_norm(ones(TFloat,length(x)), weight)`
     # so that the large weight in the normalisation of v is cancelled out.
     #
-    # We define δ = `Jv_scale_factor` below
+    # We define e = `Jv_scale_factor` below
     Jv_scale_factor = sqrt(eps(TFloat))*vector_norm(ones(TFloat,length(solution_vector_x)), weight)
     inv_Jv_scale_factor = 1.0 / Jv_scale_factor
-    # the function computing J.v = ( R(x + δ.v) - R(x))/ δ
+    # the function computing J.v = ( R(x + e.v) - R(x))/ e
     function approximate_Jacobian_vector_product!(v::Vector{TFloat}) where TFloat <: AbstractFloat
         right_preconditioner(v)
         @. v = solution_vector_x + Jv_scale_factor * v
