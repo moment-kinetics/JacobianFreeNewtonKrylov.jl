@@ -67,7 +67,7 @@ function linear_test(; n=16, max_nkrylov = 12, atol=1.0e-13, atol_expected=1.0e-
             linear_rtol=0.0,
             nonlinear_max_iterations = nonlinear_max_iterations)
 
-        newton_solve!(x, rhs_func!, nl_solver_params,
+        @test newton_solve!(x, rhs_func!, nl_solver_params,
             diagnose = false)
 
         x_direct = A \ b
@@ -82,11 +82,11 @@ function linear_test(; n=16, max_nkrylov = 12, atol=1.0e-13, atol_expected=1.0e-
     end
 end
 
-function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
+function nonlinear_test(; n = 16 , atol = 1.0e-14, rtol=0.0, max_nkrylov = 12,
             preconditioner_option::PreconditionerOptionType=no_preconditioner,
             nonlinear_max_iterations=100)
-    println("    - non-linear test: $preconditioner_option n=$n")
-    @testset "non-linear test: $preconditioner_option n=$n" begin
+    println("    - non-linear test: $preconditioner_option n=$n rtol=$rtol")
+    @testset "non-linear test: $preconditioner_option n=$n rtol=$rtol" begin
         # Test represents constant-coefficient diffusion, in 1D steady state, with a
         # central finite-difference discretisation of the second derivative.
         # solves:
@@ -170,13 +170,13 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
 
         nl_solver_params = NewtonKrylovSolverData(
             typeof(x[1]), length(x),
-            rtol = 0.0,
+            rtol = rtol,
             atol = atol,
             krylov_subspace_max_size = max_nkrylov,
             linear_rtol=0.0,
             nonlinear_max_iterations = nonlinear_max_iterations)
 
-        newton_solve!(x, rhs_func!, nl_solver_params;
+        @test newton_solve!(x, rhs_func!, nl_solver_params;
             left_preconditioner=left_preconditioner,
             right_preconditioner=right_preconditioner,
             recalculate_preconditioner=calculate_preconditioner!,
@@ -185,12 +185,12 @@ function nonlinear_test(; n = 16 , atol = 1.0e-14, max_nkrylov = 12,
         rhs_func!(nl_solver_params.residual, x)
 
         # check the residual is small
-        @test maximum(abs.(nl_solver_params.residual)) < 10.0*atol
+        @test maximum(abs.(nl_solver_params.residual)) < 10.0*maximum(atol .+ rtol*abs.(x))
 
         # compare against the manufactured solution
         x_expected = deepcopy(x)
         @. x_expected = 1.0 + z*(1-z)
-        @test maximum(abs.(x .- x_expected)) < 4.0*atol
+        @test maximum(abs.(x .- x_expected)) < 4.0*maximum(atol .+ rtol*abs.(x))
     end
 end
 
@@ -216,6 +216,12 @@ function runtests()
         nonlinear_test(n=32, atol=2.0e-14, preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=100)
         nonlinear_test(n=64, atol=8.0e-14, preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=100)
         nonlinear_test(n=128, atol=32.0e-14, preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=100)
+
+        # speed up convergence with relative tolerances
+        nonlinear_test(n=128, atol=32.0e-14, rtol=1.0e-3, preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=3, max_nkrylov = 4)
+        nonlinear_test(n=128, atol=32.0e-14, rtol=1.0e-4, preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=4, max_nkrylov = 4)
+        nonlinear_test(n=128, atol=32.0e-14, rtol=1.0e-6, preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=5, max_nkrylov = 6)
+        nonlinear_test(n=128, atol=32.0e-14, rtol=1.0e-8, preconditioner_option=use_right_preconditioner, nonlinear_max_iterations=6, max_nkrylov = 8)
     end
 end
 
