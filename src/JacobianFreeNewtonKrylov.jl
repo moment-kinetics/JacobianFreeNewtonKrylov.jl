@@ -140,10 +140,10 @@ iteration is therefore
 As the GMRES solve is only used to get the right `direction' for the next Newton step, it
 is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
-function newton_solve!(x::TVector, residual_func!::TResidual,
+function newton_solve!(solution_vector_x::TVector, residual_func!::TResidual,
             nl_solver_params::NewtonKrylovSolverData{TFloat};
-            left_preconditioner::TPreconditionerLeft=(x) -> nothing,
-            right_preconditioner::TPreconditionerRight=(x) -> nothing,
+            left_preconditioner::TPreconditionerLeft=(solution_vector_x) -> nothing,
+            right_preconditioner::TPreconditionerRight=(solution_vector_x) -> nothing,
             recalculate_preconditioner::TPreconditionerUpdate=() -> nothing,
             diagnose::Bool=false) where {
                 TFloat <: AbstractFloat,
@@ -160,20 +160,20 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
     w = nl_solver_params.w
     weight = nl_solver_params.weight
 
-    calculate_weight!(weight, nl_solver_params.atol, nl_solver_params.rtol, x)
+    calculate_weight!(weight, nl_solver_params.atol, nl_solver_params.rtol, solution_vector_x)
 
-    residual_func!(residual, x)
+    residual_func!(residual, solution_vector_x)
     residual_norm = vector_norm(residual, weight)
     newton_iterations = 0
     GMRES_iterations = 0
 
     success = true
-    while (newton_iterations < 1 && residual_norm > 1.0e-8) || residual_norm > 1.0
+    while residual_norm > 1.0
         newton_iterations += 1
 
         # use the GMRES algoritm to find the approximate solution to:
         #   J δx = -RHS(x)
-        krylov_subspace_size = linear_solve!(x, residual_func!, residual, delta_x, v, w, weight;
+        krylov_subspace_size = linear_solve!(solution_vector_x, residual_func!, residual, delta_x, v, w, weight;
                                    GMRES_rtol=nl_solver_params.linear_rtol,
                                    GMRES_atol=nl_solver_params.linear_atol,
                                    max_krylov_subspace_size=nl_solver_params.krylov_subspace_max_size,
@@ -185,7 +185,7 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
         GMRES_iterations += krylov_subspace_size
 
         # calculate the residual for the NaN diagnostic check
-        @. w = x + delta_x
+        @. w = solution_vector_x + delta_x
         residual_func!(residual, w)
         residual_norm = vector_norm(residual, weight)
         if isnan(residual_norm)
@@ -193,10 +193,10 @@ function newton_solve!(x::TVector, residual_func!::TResidual,
         end
 
         # update root estimate x_n+1 = x_n + delta_x
-        @. x = w
+        @. solution_vector_x = w
 
         # update the weight for the inner product
-        calculate_weight!(weight, nl_solver_params.atol, nl_solver_params.rtol, x)
+        calculate_weight!(weight, nl_solver_params.atol, nl_solver_params.rtol, solution_vector_x)
 
         if newton_iterations % nl_solver_params.preconditioner_update_interval == 0
             # Update the preconditioner to accelerate convergence
@@ -267,7 +267,7 @@ which allows conveniently finding the residual at each step, and computing the f
 solution, without calculating a least-squares minimisation at each step. See 'algorithm 2
 MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
-function linear_solve!(x::TVector, residual_func!::TResidual,
+function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
             residual0::TVector, delta_x::TVector, v::TVector, w::TVector,
             weight::TVector; GMRES_rtol::TFloat, GMRES_atol::TFloat, max_krylov_subspace_size::Int64,
             left_preconditioner::TPreconditionerLeft,
@@ -301,12 +301,12 @@ function linear_solve!(x::TVector, residual_func!::TResidual,
     # so that the large weight in the normalisation of v is cancelled out.
     #
     # We define δ = `Jv_scale_factor` below
-    Jv_scale_factor = sqrt(eps(TFloat))*vector_norm(ones(TFloat,length(x)), weight) #1.0e3
+    Jv_scale_factor = sqrt(eps(TFloat))*vector_norm(ones(TFloat,length(solution_vector_x)), weight)
     inv_Jv_scale_factor = 1.0 / Jv_scale_factor
     # the function computing J.v = ( R(x + δ.v) - R(x))/ δ
     function approximate_Jacobian_vector_product!(v::Vector{TFloat}) where TFloat <: AbstractFloat
         right_preconditioner(v)
-        @. v = x + Jv_scale_factor * v
+        @. v = solution_vector_x + Jv_scale_factor * v
         residual_func!(rhs_delta, v)
         @. v = (rhs_delta - residual0) * inv_Jv_scale_factor
         left_preconditioner(v)
