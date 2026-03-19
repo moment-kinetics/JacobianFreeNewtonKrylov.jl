@@ -52,7 +52,7 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     """
     function NewtonKrylovSolverData(::Type{TFloat}, n_degrees_of_freedom::Int64;
                                     # relative tolerance for convergence of Newton iterations
-                                    rtol::TFloatTol=1.0e-5,
+                                    rtol::TFloatTol=1.0e-8,
                                     # absolute tolerance for convergence of Newton iterations
                                     atol::TFloatTol=1.0e-12,
                                     # max newton_solve! iterations
