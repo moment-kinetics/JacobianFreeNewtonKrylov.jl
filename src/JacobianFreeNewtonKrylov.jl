@@ -348,13 +348,13 @@ function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
                 # store the Hessenberg matrix entry
                 H[j,i] = w_dot_Vj
             end
+            # store new, normalised Krylov vector
             norm_w = vector_norm(w, weight)
-
-            H[i+1,i] = norm_w
-
             for k in eachindex(w)
-                V[k,i+1] = w[k]/H[i+1,i]
+                V[k,i+1] = w[k]/norm_w
             end
+            # store the Hessenberg matrix entry
+            H[i+1,i] = norm_w
 
             # apply Givens rotation to find new values of H and g
             for j ∈ 1:i-1
