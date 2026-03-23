@@ -163,6 +163,7 @@ function newton_solve!(solution_vector_x::TVector, residual_func!::TResidual,
     v = nl_solver_params.v
     w = nl_solver_params.w
     weight = nl_solver_params.weight
+    @boundscheck length(residual) == length(solution_vector_x) || throw(BoundsError(solution_vector_x))
 
     # N.B. the weights are proportional to 1/(atol + rtol * |x|)^2
     calculate_weight!(weight, nl_solver_params.atol, nl_solver_params.rtol, solution_vector_x)
