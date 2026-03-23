@@ -237,13 +237,14 @@ function calculate_weight!(weight::Vector{TFloat},
     # @. weight *= normalisation
     return nothing
 end
-function vector_norm(residual::Array{TFloat, 1},
+function vector_norm(residual::Vector{TFloat},
             weight::Vector{TFloat}) where TFloat <: AbstractFloat
     return sqrt(vector_dot_product(residual, residual, weight))
 end
 
-function vector_dot_product(v::Array{TFloat, 1}, w::Array{TFloat, 1},
-            weight::Vector{TFloat}) where TFloat <: AbstractFloat
+function vector_dot_product(v::Vector{TFloat}, w::TVector,
+            weight::Vector{TFloat}) where {TFloat <: AbstractFloat,
+                                        TVector <: AbstractArray{TFloat,1}}
     dot_product = 0.0
     @inbounds for i in eachindex(v,w)
         dot_product += v[i] * w[i] * weight[i]
@@ -341,10 +342,7 @@ function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
 
             # Gram-Schmidt orthogonalization
             for j ∈ 1:i
-                for k in eachindex(v)
-                    v[k] = V[k,j]
-                end
-                w_dot_Vj = vector_dot_product(w, v, weight)
+                @views w_dot_Vj = vector_dot_product(w, V[:,j], weight)
 
                 H[j,i] = w_dot_Vj
 
