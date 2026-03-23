@@ -29,7 +29,7 @@ Useful references:
 """
 module JacobianFreeNewtonKrylov
 
-using LinearAlgebra: mul!, ldiv!, lu
+using LinearAlgebra: mul!, ldiv!, lu, axpy!
 
 export newton_solve!,
        NewtonKrylovSolverData
@@ -310,7 +310,7 @@ function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
 
     # To start with we use 'v' as a buffer to make a copy of residual0 to which we can apply
     # the left-preconditioner.
-    @. v = residual0
+    copyto!(v,residual0)
     left_preconditioner(v)
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
@@ -334,21 +334,19 @@ function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
             krylov_subspace_size = i
 
             # Compute next Krylov vector
-            for k in eachindex(w)
-                w[k] = V[k,i]
-            end
+            @views copyto!(w,V[:,i])
 
+            # calculate J.w in place
             approximate_Jacobian_vector_product!(w)
 
             # Gram-Schmidt orthogonalization
             for j ∈ 1:i
-                @views w_dot_Vj = vector_dot_product(w, V[:,j], weight)
-
+                @views copyto!(v, V[:,j])
+                w_dot_Vj = vector_dot_product(w, v, weight)
+                # subtract projection of v:  w = w - (v,w) * v
+                axpy!(-w_dot_Vj, v, w)
+                # store the Hessenberg matrix entry
                 H[j,i] = w_dot_Vj
-
-                for k in eachindex(w)
-                    w[k] = w[k] - H[j,i] * V[k,j]
-                end
             end
             norm_w = vector_norm(w, weight)
 
