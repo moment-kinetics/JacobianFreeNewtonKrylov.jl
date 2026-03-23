@@ -108,14 +108,14 @@ end
 solve.
 
 `rhs_func!(residual, x)` is the function we are trying to find a solution of. It calculates
-```math
-\\mathtt{residual} = R(\\mathtt{x})
 ```
-where we are trying to solve \$R(x)=0\$.
+residual = R(x)
+```
+where we are trying to solve `R(x)=0`.
 
 `left_preconditioner` or `right_preconditioner` apply preconditioning. They should be
-passed a function that solves \$P.x = b\$ where \$P\$ is the preconditioner matrix, \$b\$
-is given by the values passed to the function as the argument, and the result \$x\$ is
+passed a function that solves `P.x = b` where `P` is the preconditioner matrix, `b`
+is given by the values passed to the function as the argument, and the result `x` is
 returned by overwriting the argument.
 
 Tolerances
@@ -124,21 +124,21 @@ Tolerances
 Note that the meaning of the relative tolerance `rtol` and absolute tolerance `atol` is
 very different for the outer Newton iteration and the inner GMRES iteration.
 
-For the outer Newton iteration the residual \$R(x^n)\$ measures the departure of the
+For the outer Newton iteration the residual `R(x^n)` measures the departure of the
 system from the solution with a weight `rtol` that weights the residual with a relative
 error compared to the solution at each grid point, and an absolute tolerance `atol`.
 
-In contrast, GMRES is constructed to minimise the L2 norm of \$r_k = b - A\\cdot x_k\$
-where GMRES is solving the linear system \$A\\cdot x = b\$, \$x_k\$ is the approximation
-to the solution \$x\$ at the \$k\$'th iteration and \$r_k\$ is the residual at the
-\$k\$'th iteration. There is no flexibility to measure error relative to \$x\$ in any
+In contrast, GMRES is constructed to minimise the norm || . || of  `r_k = b - A . x_k`
+where GMRES is solving the linear system `A . x = b`, `x_k` is the approximation
+to the solution `x` at the `k`'th iteration and `r_k` is the residual at the
+`k`'th iteration. There is no flexibility to measure error relative to `x` in any
 sense. For GMRES, a `relative tolerance' is relative to the residual of the
-right-hand-side \$b\$, which is the first iterate \$x_0\$ (when no initial guess is
+right-hand-side `b`, which is the first iterate `x_0` (when no initial guess is
 given). [Where a non-zero initial guess is given it might be better to use a different
 stopping criterion, see Carson et al. section 3.8.]. The stopping criterion for the GMRES
 iteration is therefore
 ```
-\\left\\lVert r_k \\right\\rVert < \\max(\\mathtt{linear\\_rtol} \\left\\lVert r_0 \\right\\rVert, \\mathtt{linear\\_atol}) = \\max(\\mathtt{linear\\_rtol} \\left\\lVert b \\right\\rVert, \\mathtt{linear\\_atol})
+|| r_k || < max(linear_rtol || r_0 ||, linear_atol) = max(linear_rtol} || b ||, linear_atol)
 ```
 """
 function newton_solve!(solution_vector_x::TVector, residual_func!::TResidual,
