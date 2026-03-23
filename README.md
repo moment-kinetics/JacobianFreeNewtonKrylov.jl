@@ -72,7 +72,7 @@ by minimising
 ```math
    || r ||_W = ||b - A \cdot u||_W
 ```
-In this system, when the initial guess for $`u=0`$, and the size of $`u`$ cannot be easily anticipated, we can define a convergence criterion by comparing the size of the residual after each GMRES iteration. The initial norm of the residual $r$ for $`u^0=0`$ is
+In this system, when the initial guess for $`u=0`$, and the size of $`u`$ cannot be easily anticipated, we can define a convergence criterion by comparing the size of the residual after each GMRES iteration. The initial norm of the residual $`r`$ for $`u^0=0`$ is
 ```math
     \beta = || r^0 ||_W = || b||_W,
 ```
