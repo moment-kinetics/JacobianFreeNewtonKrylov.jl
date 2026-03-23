@@ -36,9 +36,6 @@ struct NewtonKrylovDiagnostics
     n_solves::Base.RefValue{Int64}
     nonlinear_iterations::Base.RefValue{Int64}
     linear_iterations::Base.RefValue{Int64}
-    function NewtonKrylovDiagnostics()
-        return new(Ref(0), Ref(0), Ref(0))
-    end
 end
 
 struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
@@ -99,7 +96,7 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
                 linear_atol, krylov_subspace_max_size,
                 H, c, s, g, V,
                 residual, delta_x, rhs_delta, v, w, weight,
-                NewtonKrylovDiagnostics())
+                NewtonKrylovDiagnostics(Ref(0), Ref(0), Ref(0)))
     end
 end
 
