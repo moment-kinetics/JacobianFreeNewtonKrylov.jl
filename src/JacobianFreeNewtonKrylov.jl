@@ -28,7 +28,7 @@ Useful references:
 [7] Q. Zou, "GMRES algorithms over 35 years", Applied Mathematics and Computation 445, 127869 (2023), https://doi.org/10.1016/j.amc.2023.127869
 """
 module JacobianFreeNewtonKrylov
-
+using LinearAlgebra
 export newton_solve!,
        NewtonKrylovSolverData
 
@@ -250,19 +250,6 @@ function vector_dot_product(v::Array{TFloat, 1}, w::Array{TFloat, 1},
     return dot_product
 end
 
-function calculate_delta_x(delta_x::Array{TFloat, 1},
-            V::Array{TFloat,2}, y::Vector{TFloat}) where TFloat <: AbstractFloat
-    @. delta_x = 0.0
-    @inbounds begin
-        for iy in eachindex(y)
-            for icoord in eachindex(delta_x)
-                delta_x[icoord] += y[iy] * V[icoord,iy]
-            end
-        end
-    end
-    return nothing
-end
-
 """
 Apply the GMRES algorithm to solve the 'linear problem' J.δx^n = R(x^n), which is needed
 at each step of the outer Newton iteration (in `newton_solve!()`).
@@ -401,7 +388,7 @@ function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
 
     # The following calculates
     #    delta_x .= sum(y[i] .* V[:,i] for i ∈ 1:length(y))
-    calculate_delta_x(delta_x, V, y)
+    @views mul!(delta_x, V[:,1:i], y)
     right_preconditioner(delta_x)
 
     return krylov_subspace_size
