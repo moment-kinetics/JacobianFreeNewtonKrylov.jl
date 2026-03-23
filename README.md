@@ -64,7 +64,7 @@ where we indicate that the solution vector $`x^{n-1}`$ is used to define the wei
 
 # Tolerances in the GMRES linear solve
 
-The GMRES calculation of $`\delta\! x`$ is also controlled by tolerances. In notation similar to [7](#references) we identify $`A = J`$, $`b = R(x^n)`$ and $u = \delta\! x$. GMRES is constructed to solve
+The GMRES calculation of $`\delta\! x`$ is also controlled by tolerances. In notation similar to [7](#references) we identify $`A = J`$, $`b = R(x^n)`$ and $`u = \delta\! x`$. GMRES is constructed to solve
 ```math
     A \cdot u = b
 ```
