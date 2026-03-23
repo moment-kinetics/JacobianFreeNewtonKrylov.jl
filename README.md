@@ -28,7 +28,7 @@ Here, we use the weighted GMRES method [4-7](#references) to solve the linear sy
 ```
 Where $`r = J\cdot \delta\! x + R(x^n)`$ is the GMRES residual, the norm $`|| \cdot ||_W`$ is defined through the weighted inner product $`(u,v)_W`$ by
 ```math
-|| u ||_D = \sqrt{(u,u)_W},
+|| u ||_W = \sqrt{(u,u)_W},
 ```
 with
 ```math
