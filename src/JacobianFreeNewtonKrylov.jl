@@ -28,7 +28,9 @@ Useful references:
 [7] Q. Zou, "GMRES algorithms over 35 years", Applied Mathematics and Computation 445, 127869 (2023), https://doi.org/10.1016/j.amc.2023.127869
 """
 module JacobianFreeNewtonKrylov
-using LinearAlgebra
+
+using LinearAlgebra: mul!, ldiv!, lu
+
 export newton_solve!,
        NewtonKrylovSolverData
 
@@ -384,7 +386,10 @@ function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
     # finally, compute delta_x
     #################################
 
-    @views y = H[1:i,1:i] \ g[1:i]
+    # The following calculates y, in place
+    # @views y = H[1:i,1:i] \ g[1:i]
+    y = @views g[1:i]
+    ldiv!(lu(H[1:i,1:i]), y)
 
     # The following calculates
     #    delta_x .= sum(y[i] .* V[:,i] for i ∈ 1:length(y))
