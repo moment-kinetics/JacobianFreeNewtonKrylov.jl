@@ -60,46 +60,47 @@ struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
     w::Vector{TFloat}
     weight::Vector{TFloat}
     diagnostics::NewtonKrylovDiagnostics
-    """
-    """
-    function NewtonKrylovSolverData(::Type{TFloat}, n_degrees_of_freedom::Int64;
-                                    # relative tolerance for convergence of Newton iterations
-                                    rtol::TFloatTol=1.0e-8,
-                                    # absolute tolerance for convergence of Newton iterations
-                                    atol::TFloatTol=1.0e-12,
-                                    # max newton_solve! iterations
-                                    nonlinear_max_iterations::Int64=20,
-                                    # tolerance for GMRES linear solve, relative to the residual_norm
-                                    # which is weighted with 1/(atol + rtol |x|), with x the solution vector.
-                                    # GMRES_atol = 1 implies that the GMRES linear solve converges to
-                                    # the same precision as the final Newton iteration.
-                                    linear_rtol::TFloatTol=1.0e-3,
-                                    linear_atol::TFloatTol=1.0,
-                                    # (maximum) number of members of Krylov subspace in GMRES solve
-                                    krylov_subspace_max_size::Int64=10,
-                                    preconditioner_update_interval::Int64=300) where {
-                                        TFloat <: AbstractFloat, TFloatTol <: AbstractFloat}
-        # buffer arrays for Newton-Krylov-GMRES solve
-        H = Array{TFloat,2}(undef, krylov_subspace_max_size + 1, krylov_subspace_max_size)
-        c = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
-        s = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
-        g = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
-        V = Array{TFloat,2}(undef, n_degrees_of_freedom, krylov_subspace_max_size + 1)
-        residual = Vector{TFloat}(undef, n_degrees_of_freedom)
-        delta_x = Vector{TFloat}(undef, n_degrees_of_freedom)
-        rhs_delta = Vector{TFloat}(undef, n_degrees_of_freedom)
-        v = Vector{TFloat}(undef, n_degrees_of_freedom)
-        w = Vector{TFloat}(undef, n_degrees_of_freedom)
-        weight = Vector{TFloat}(undef, n_degrees_of_freedom)
-        return new{TFloat}(rtol, atol,
-                nonlinear_max_iterations,
-                preconditioner_update_interval,
-                linear_rtol,
-                linear_atol, krylov_subspace_max_size,
-                H, c, s, g, V,
-                residual, delta_x, rhs_delta, v, w, weight,
-                NewtonKrylovDiagnostics(Ref(0), Ref(0), Ref(0)))
-    end
+end
+"""
+External constructor function for `NewtonKrylovSolverData`
+"""
+function NewtonKrylovSolverData(::Type{TFloat}, n_degrees_of_freedom::Int64;
+                                # relative tolerance for convergence of Newton iterations
+                                rtol::TFloatTol=1.0e-8,
+                                # absolute tolerance for convergence of Newton iterations
+                                atol::TFloatTol=1.0e-12,
+                                # max newton_solve! iterations
+                                nonlinear_max_iterations::Int64=20,
+                                # tolerance for GMRES linear solve, relative to the residual_norm
+                                # which is weighted with 1/(atol + rtol |x|), with x the solution vector.
+                                # GMRES_atol = 1 implies that the GMRES linear solve converges to
+                                # the same precision as the final Newton iteration.
+                                linear_rtol::TFloatTol=1.0e-3,
+                                linear_atol::TFloatTol=1.0,
+                                # (maximum) number of members of Krylov subspace in GMRES solve
+                                krylov_subspace_max_size::Int64=10,
+                                preconditioner_update_interval::Int64=300) where {
+                                    TFloat <: AbstractFloat, TFloatTol <: AbstractFloat}
+    # buffer arrays for Newton-Krylov-GMRES solve
+    H = Array{TFloat,2}(undef, krylov_subspace_max_size + 1, krylov_subspace_max_size)
+    c = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
+    s = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
+    g = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
+    V = Array{TFloat,2}(undef, n_degrees_of_freedom, krylov_subspace_max_size + 1)
+    residual = Vector{TFloat}(undef, n_degrees_of_freedom)
+    delta_x = Vector{TFloat}(undef, n_degrees_of_freedom)
+    rhs_delta = Vector{TFloat}(undef, n_degrees_of_freedom)
+    v = Vector{TFloat}(undef, n_degrees_of_freedom)
+    w = Vector{TFloat}(undef, n_degrees_of_freedom)
+    weight = Vector{TFloat}(undef, n_degrees_of_freedom)
+    return NewtonKrylovSolverData{TFloat}(rtol, atol,
+            nonlinear_max_iterations,
+            preconditioner_update_interval,
+            linear_rtol,
+            linear_atol, krylov_subspace_max_size,
+            H, c, s, g, V,
+            residual, delta_x, rhs_delta, v, w, weight,
+            NewtonKrylovDiagnostics(Ref(0), Ref(0), Ref(0)))
 end
 
 """
