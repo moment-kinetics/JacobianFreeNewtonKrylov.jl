@@ -231,7 +231,7 @@ end
 
 function calculate_weight!(weight::Vector{TFloat},
             atol::TFloat, rtol::TFloat, solution_vector_x::Vector{TFloat})  where TFloat <: AbstractFloat
-    for i in eachindex(solution_vector_x,weight)
+    @inbounds for i in eachindex(solution_vector_x,weight)
         weight[i] = 1.0 / abs2(rtol * abs(solution_vector_x[i]) + atol)
     end
     # normalisation = length(weight)/sum(weight)
@@ -246,7 +246,7 @@ end
 function vector_dot_product(v::Array{TFloat, 1}, w::Array{TFloat, 1},
             weight::Vector{TFloat}) where TFloat <: AbstractFloat
     dot_product = 0.0
-    for i in eachindex(v,w)
+    @inbounds for i in eachindex(v,w)
         dot_product += v[i] * w[i] * weight[i]
     end
     dot_product = dot_product / length(v)
@@ -256,9 +256,11 @@ end
 function calculate_delta_x(delta_x::Array{TFloat, 1},
             V::Array{TFloat,2}, y::Vector{TFloat}) where TFloat <: AbstractFloat
     @. delta_x = 0.0
-    for iy in eachindex(y)
-        for icoord in eachindex(delta_x)
-            delta_x[icoord] += y[iy] * V[icoord,iy]
+    @inbounds begin
+        for iy in eachindex(y)
+            for icoord in eachindex(delta_x)
+                delta_x[icoord] += y[iy] * V[icoord,iy]
+            end
         end
     end
     return nothing
@@ -296,7 +298,7 @@ function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
     # In the standard GMRES method where the vector v has entries of order unity,
     # v being computed from a vector u by `v = u / vector_norm(u, weight)`.
     # The number e should be << 1, but not so small as to cause rounding errors when
-    # evaluating R(x + e.v) - R(x). A suitable choice for for e in these circumstances is
+    # evaluating R(x + e.v) - R(x). A suitable choice for e in these circumstances is
     # e = `sqrt(eps())`, where `eps()` is machine precision for the floating point type.
     #
     # However, here we use the weighted GMRES method, and v is normalised with a large weight
@@ -327,7 +329,7 @@ function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
     @. w = -v
     beta = vector_norm(w, weight)
-    for i in eachindex(w)
+    @inbounds for i in eachindex(w)
         V[i,1] = w[i]/beta
     end
     g[1] = beta
@@ -340,55 +342,57 @@ function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
     # set H to zero to ensure lower-than-diagonal entries
     # of the upper Hessenberg matrix are zero
     @. H = 0.0
-    for i ∈ 1:max_krylov_subspace_size
-        krylov_subspace_size = i
+    @inbounds begin
+        for i ∈ 1:max_krylov_subspace_size
+            krylov_subspace_size = i
 
-        # Compute next Krylov vector
-        for k in eachindex(w)
-            w[k] = V[k,i]
-        end
-
-        approximate_Jacobian_vector_product!(w)
-
-        # Gram-Schmidt orthogonalization
-        for j ∈ 1:i
-            for k in eachindex(v)
-                v[k] = V[k,j]
+            # Compute next Krylov vector
+            for k in eachindex(w)
+                w[k] = V[k,i]
             end
-            w_dot_Vj = vector_dot_product(w, v, weight)
 
-            H[j,i] = w_dot_Vj
+            approximate_Jacobian_vector_product!(w)
+
+            # Gram-Schmidt orthogonalization
+            for j ∈ 1:i
+                for k in eachindex(v)
+                    v[k] = V[k,j]
+                end
+                w_dot_Vj = vector_dot_product(w, v, weight)
+
+                H[j,i] = w_dot_Vj
+
+                for k in eachindex(w)
+                    w[k] = w[k] - H[j,i] * V[k,j]
+                end
+            end
+            norm_w = vector_norm(w, weight)
+
+            H[i+1,i] = norm_w
 
             for k in eachindex(w)
-                w[k] = w[k] - H[j,i] * V[k,j]
+                V[k,i+1] = w[k]/H[i+1,i]
             end
-        end
-        norm_w = vector_norm(w, weight)
 
-        H[i+1,i] = norm_w
+            # apply Givens rotation to find new values of H and g
+            for j ∈ 1:i-1
+                gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
+                H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
+                H[j,i] = gamma
+            end
+            delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
+            s[i] = H[i+1,i] / delta
+            c[i] = H[i,i] / delta
+            H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
+            H[i+1,i] = 0
+            g[i+1] = -s[i] * g[i]
+            g[i] = c[i] * g[i]
 
-        for k in eachindex(w)
-            V[k,i+1] = w[k]/H[i+1,i]
-        end
+            residual = abs(g[i+1])
 
-        # apply Givens rotation to find new values of H and g
-        for j ∈ 1:i-1
-            gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
-            H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
-            H[j,i] = gamma
-        end
-        delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
-        s[i] = H[i+1,i] / delta
-        c[i] = H[i,i] / delta
-        H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
-        H[i+1,i] = 0
-        g[i+1] = -s[i] * g[i]
-        g[i] = c[i] * g[i]
-
-        residual = abs(g[i+1])
-
-        if residual < tol
-            break
+            if residual < tol
+                break
+            end
         end
     end
     i = krylov_subspace_size
