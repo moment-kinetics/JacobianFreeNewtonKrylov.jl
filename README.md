@@ -2,7 +2,7 @@
 
 A package implementing a Jacobian-free Newton-Krylov method [1-3](#references) for solving nonlinear systems in serial. Newton-Krylov solvers use an outer Newton iteration to solve the system
 ```math
-   R(x) = 0, \tag{1}
+   R(x) = 0, \quad \quad (1)
 ```
 where $`R`$ is the residual function and $`x`$ is the solution vector.
 Starting with an initial approximation of the root $`x^n`$, we linearise (1)
@@ -19,7 +19,7 @@ is the Jacobian matrix. The next approximation to the root is therefore given by
 ```
 Each step of the Newton iteration requires a solution to the linearised system
 ```math
-   J\cdot \delta\! x = -R(x^n) \tag{2}
+   J\cdot \delta\! x = -R(x^n) \quad \quad (2)
 ```
 for the $`n^{\rm th}`$ iteration of the solution vector $`x^n`$
 Here, we use the weighted GMRES method [4-7](#references) to solve the linear system (2), which is a method that uses the Krylov subspace to obtain a solution without an explicit expression for $`J`$. Instead, GMRES computes the $`\delta\! x`$ which minimises
