@@ -1,188 +1,125 @@
 """
-Nonlinear solvers, using Jacobian-free Newton-Krylov methods.
+A package implementing a Jacobian-free Newton-Krylov method [1-3] for solving nonlinear systems in serial.
 
-These solvers use an outer Newton iteration. Each step of the Newton iteration requires a
-linear solve of the Jacobian. An 'inexact Jacobian' method is used, and the GMRES method
-(GMRES is a type of Krylov solver) is used to (approximately) solve the (approximate)
-linear system.
-
-Info regarding "parallelisation"
-    This module uses functions defined with serial methods. For the user to enable
-    parallelisation with distributed- or shared-memory MPI, the user needs to add methods
-    (in an external module) to the functions
-
-    `allocate_jfnk_arrays`
-    `set_g1!`
-    `set_Hji!`
-    `set_gi!`
-    `distributed_norm`
-    `distributed_dot`
-    `parallel_map`
-    `parallel_delta_x_calc`
-
-`parallel_map()` is used to apply elementwise functions to arbitrary numbers of arguments.
- We do this rather than writing the loops out explicitly so that `newton_solve!()` and
- `linear_solve!()` can work for arrays with any combination of dimensions.
+This class of solvers use an outer Newton iteration to solve the system
+   R(x) = 0,
+where R is the residual function and x is the solution vector.
+Each step of the Newton iteration requires a solution to the linearised system
+   J.δx = -R(x^n)
+for the nth iteration of the solution vector x^n, where J = δR/δx is the Jacobian.
+Here, we use the (weighted) GMRES method [4-7] to solve the linear system,
+which is a method that uses the Krylov subspace to obtain a solution
+without an explicit expression for J. Instead, GMRES computes the δx which minimises
+    r = || J.δx + R(x^n) ||
+For this method, only the product J.v for a vector v is required.
+We compute this product using the finite difference
+    J.v = (R(x + e.v) - R(x))/e + O(e.v)
+for e a suitably sized number for the estimate
+    O(e.v) << J.v
+to hold.
 
 Useful references:
-[1] V.A. Mousseau and D.A. Knoll, "Fully Implicit Kinetic Solution of Collisional Plasmas", Journal of Computational Physics 136, 308–323 (1997), https://doi.org/10.1006/jcph.1997.5736.
-[2] V.A. Mousseau, "Fully Implicit Kinetic Modelling of Collisional Plasmas", PhD thesis, Idaho National Engineering Laboratory (1996), https://inis.iaea.org/collection/NCLCollectionStore/_Public/27/067/27067141.pdf.
-[3] https://en.wikipedia.org/wiki/Generalized_minimal_residual_method
-[4] https://www.rikvoorhaar.com/blog/gmres
-[5] E. Carson , J. Liesen, Z. Strakoš, "Towards understanding CG and GMRES through examples", Linear Algebra and its Applications 692, 241–291 (2024), https://doi.org/10.1016/j.laa.2024.04.003. 
-[6] Q. Zou, "GMRES algorithms over 35 years", Applied Mathematics and Computation 445, 127869 (2023), https://doi.org/10.1016/j.amc.2023.127869
+[1] D.A. Knoll, D.E. Keyes, "Jacobian-free Newton–Krylov methods: a survey of approaches and applications", Journal of Computational Physics, Volume 193, 2004, Pages 357-397, https://doi.org/10.1016/j.jcp.2003.08.010.
+[2] V.A. Mousseau and D.A. Knoll, "Fully Implicit Kinetic Solution of Collisional Plasmas", Journal of Computational Physics 136, 308–323 (1997), https://doi.org/10.1006/jcph.1997.5736.
+[3] V.A. Mousseau, "Fully Implicit Kinetic Modelling of Collisional Plasmas", PhD thesis, Idaho National Engineering Laboratory (1996), https://inis.iaea.org/collection/NCLCollectionStore/_Public/27/067/27067141.pdf.
+[4] https://en.wikipedia.org/wiki/Generalized_minimal_residual_method
+[5] https://www.rikvoorhaar.com/blog/gmres
+[6] E. Carson , J. Liesen, Z. Strakoš, "Towards understanding CG and GMRES through examples", Linear Algebra and its Applications 692, 241–291 (2024), https://doi.org/10.1016/j.laa.2024.04.003.
+[7] Q. Zou, "GMRES algorithms over 35 years", Applied Mathematics and Computation 445, 127869 (2023), https://doi.org/10.1016/j.amc.2023.127869
 """
 module JacobianFreeNewtonKrylov
 
-export reset_nonlinear_per_stage_counters!,
-       newton_solve!,
-       nl_solver_info
-# promote type to user defined function?
-jfnk_float = Float64
-jfnk_int = Int64
+using LinearAlgebra: mul!, ldiv!, lu, axpy!
 
-struct nl_solver_info{TH,TV,Tcsg}
-    # tuple of coordinates, with each coordinate
-    # c in coords having a member c.n which is the
-    # number of points in the c grid.
-    coords::NamedTuple
-    rtol::jfnk_float
-    atol::jfnk_float
-    nonlinear_max_iterations::jfnk_int
-    linear_rtol::jfnk_float
-    linear_atol::jfnk_float
-    linear_restart::jfnk_int
-    linear_max_restarts::jfnk_int
-    H::TH
-    c::Tcsg
-    s::Tcsg
-    g::Tcsg
-    V::TV
-    n_solves::Base.RefValue{jfnk_int}
-    nonlinear_iterations::Base.RefValue{jfnk_int}
-    linear_iterations::Base.RefValue{jfnk_int}
-    precon_iterations::Base.RefValue{jfnk_int}
-    solves_since_precon_update::Base.RefValue{jfnk_int}
-    max_nonlinear_iterations_this_step::Base.RefValue{jfnk_int}
-    max_linear_iterations_this_step::Base.RefValue{jfnk_int}
-    preconditioner_update_interval::jfnk_int
-    """
-    `coords` is a NamedTuple of coordinates corresponding to the dimensions of the variable
-    that will be solved. The entries in `coords` should be ordered the same as the memory
-    layout of the variable to be solved (i.e. fastest-varying first).
+export newton_solve!,
+       NewtonKrylovSolverData
 
-    The nonlinear solver will be called inside a loop over `outer_coords`, so we might need
-    for example a preconditioner object for each point in that outer loop.
-    """
-    function nl_solver_info(coords, outer_coords=();
-                                    # relative tolerance for convergence
-                                    rtol=1.0e-5,
-                                    # absolute tolerance for convergence
-                                    atol=1.0e-12,
-                                    # max newton_solve! iterations
-                                    nonlinear_max_iterations=20,
-                                    linear_rtol=1.0e-3,
-                                    linear_atol=1.0,
-                                    # number of members of Krylov subspace
-                                    linear_restart=10,
-                                    linear_max_restarts=0,
-                                    preconditioner_update_interval=300,
-                                    parallelisation_type=Val(:serial))
-        #coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ coords)
-        # permit coord to be named tuple
-        coord_sizes = Tuple(c.n for c ∈ coords)
-        total_size_coords = prod(coord_sizes)
-        #outer_coord_sizes = Tuple(isa(c, coordinate) ? c.n : c for c ∈ outer_coords)
-        # permit coord to be named tuple
-        outer_coord_sizes = Tuple(c.n for c ∈ outer_coords)
+struct NewtonKrylovDiagnostics
+    n_solves::Base.RefValue{Int64}
+    nonlinear_iterations::Base.RefValue{Int64}
+    linear_iterations::Base.RefValue{Int64}
+end
 
-        n_vcut_inds = 0
-
-        H, c, s, g, V = allocate_jfnk_arrays(parallelisation_type, linear_restart, coord_sizes)
-
-        return new{typeof(H),typeof(V),typeof(c)}(coords,
-                    jfnk_float(rtol), jfnk_float(atol),
-                    nonlinear_max_iterations,
-                    jfnk_float(linear_rtol),
-                    jfnk_float(linear_atol), linear_restart,
-                    linear_max_restarts, H, c, s, g, V,
-                    Ref(0), Ref(0), Ref(0), Ref(0),
-                    Ref(preconditioner_update_interval),
-                    Ref(0), Ref(0),
-                    preconditioner_update_interval)
-    end
+struct NewtonKrylovSolverData{TFloat <: AbstractFloat}
+    rtol::TFloat
+    atol::TFloat
+    nonlinear_max_iterations::Int64
+    preconditioner_update_interval::Int64
+    linear_rtol::TFloat
+    linear_atol::TFloat
+    krylov_subspace_max_size::Int64
+    H::Array{TFloat,2}
+    c::Array{TFloat,1}
+    s::Array{TFloat,1}
+    g::Array{TFloat,1}
+    V::Array{TFloat,2}
+    residual::Vector{TFloat}
+    delta_x::Vector{TFloat}
+    rhs_delta::Vector{TFloat}
+    v::Vector{TFloat}
+    w::Vector{TFloat}
+    weight::Vector{TFloat}
+    diagnostics::NewtonKrylovDiagnostics
+end
+"""
+External constructor function for `NewtonKrylovSolverData`
+"""
+function NewtonKrylovSolverData(::Type{TFloat}, n_degrees_of_freedom::Int64;
+                                # relative tolerance for convergence of Newton iterations
+                                rtol::TFloatTol=1.0e-8,
+                                # absolute tolerance for convergence of Newton iterations
+                                atol::TFloatTol=1.0e-12,
+                                # max newton_solve! iterations
+                                nonlinear_max_iterations::Int64=20,
+                                # tolerance for GMRES linear solve, relative to the residual_norm
+                                # which is weighted with 1/(atol + rtol |x|), with x the solution vector.
+                                # GMRES_atol = 1 implies that the GMRES linear solve converges to
+                                # the same precision as the final Newton iteration.
+                                linear_rtol::TFloatTol=1.0e-3,
+                                linear_atol::TFloatTol=1.0,
+                                # (maximum) number of members of Krylov subspace in GMRES solve
+                                krylov_subspace_max_size::Int64=10,
+                                preconditioner_update_interval::Int64=300) where {
+                                    TFloat <: AbstractFloat, TFloatTol <: AbstractFloat}
+    # buffer arrays for Newton-Krylov-GMRES solve
+    H = Array{TFloat,2}(undef, krylov_subspace_max_size + 1, krylov_subspace_max_size)
+    c = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
+    s = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
+    g = Array{TFloat,1}(undef, krylov_subspace_max_size + 1)
+    V = Array{TFloat,2}(undef, n_degrees_of_freedom, krylov_subspace_max_size + 1)
+    residual = Vector{TFloat}(undef, n_degrees_of_freedom)
+    delta_x = Vector{TFloat}(undef, n_degrees_of_freedom)
+    rhs_delta = Vector{TFloat}(undef, n_degrees_of_freedom)
+    v = Vector{TFloat}(undef, n_degrees_of_freedom)
+    w = Vector{TFloat}(undef, n_degrees_of_freedom)
+    weight = Vector{TFloat}(undef, n_degrees_of_freedom)
+    return NewtonKrylovSolverData{TFloat}(rtol, atol,
+            nonlinear_max_iterations,
+            preconditioner_update_interval,
+            linear_rtol,
+            linear_atol, krylov_subspace_max_size,
+            H, c, s, g, V,
+            residual, delta_x, rhs_delta, v, w, weight,
+            NewtonKrylovDiagnostics(Ref(0), Ref(0), Ref(0)))
 end
 
 """
-Function to permit type-determined allocation of arrays
-where the type `parallelisation_type` allows the user
-to add methods where the arrays are added with different
-communicators.
-
-Only the serial version is defined in this module.
-"""
-function allocate_jfnk_arrays end
-
-function allocate_jfnk_arrays(::Val{:serial}, linear_restart, coord_sizes)
-    H = Array{jfnk_float,2}(undef,linear_restart + 1, linear_restart)
-    c = Array{jfnk_float,1}(undef,linear_restart + 1)
-    s = Array{jfnk_float,1}(undef,linear_restart + 1)
-    g = Array{jfnk_float,1}(undef,linear_restart + 1)
-    V = Array{jfnk_float,length(coord_sizes)+1}(undef,reverse(coord_sizes)..., linear_restart+1)
-    # suspicious that we need to zero the dummy arrays
-    H .= 0.0
-    c .= 0.0
-    s .= 0.0
-    g .= 0.0
-    V .= 0.0
-    return H, c, s, g, V
-end
-
-"""
-    reset_nonlinear_per_stage_counters!(nl_solver_params::Union{nl_solver_info,Nothing})
-
-Reset the counters that hold per-step totals or maximums in `nl_solver_params`.
-
-Also increment `nl_solver_params.stage_counter[]`.
-"""
-function reset_nonlinear_per_stage_counters!(nl_solver_params::Union{nl_solver_info,Nothing})
-    if nl_solver_params === nothing
-        return nothing
-    end
-
-    nl_solver_params.max_nonlinear_iterations_this_step[] = 0
-    nl_solver_params.max_linear_iterations_this_step[] = 0
-
-    # Also increment the stage counter
-    nl_solver_params.solves_since_precon_update[] += 1
-
-    return nothing
-end
-
-"""
-    newton_solve!(x, rhs_func!, residual, delta_x, rhs_delta, w, nl_solver_params;
-                  left_preconditioner=nothing, right_preconditioner=nothing, coords)
+    newton_solve!(x, rhs_func!, nl_solver_params;
+                  left_preconditioner=(x) -> nothing, right_preconditioner=(x) -> nothing)
 
 `x` is the initial guess at the solution, and is overwritten by the result of the Newton
 solve.
 
 `rhs_func!(residual, x)` is the function we are trying to find a solution of. It calculates
-```math
-\\mathtt{residual} = F(\\mathtt{x})
 ```
-where we are trying to solve \$F(x)=0\$.
-
-`residual`, `delta_x`, `rhs_delta` and `w` are buffer arrays, with the same size as `x`,
-used internally.
+residual = R(x)
+```
+where we are trying to solve `R(x)=0`.
 
 `left_preconditioner` or `right_preconditioner` apply preconditioning. They should be
-passed a function that solves \$P.x = b\$ where \$P\$ is the preconditioner matrix, \$b\$
-is given by the values passed to the function as the argument, and the result \$x\$ is
+passed a function that solves `P.x = b` where `P` is the preconditioner matrix, `b`
+is given by the values passed to the function as the argument, and the result `x` is
 returned by overwriting the argument.
-
-`coords` is a NamedTuple containing the `coordinate` structs corresponding to each
-dimension in `x`.
-
 
 Tolerances
 ----------
@@ -190,305 +127,132 @@ Tolerances
 Note that the meaning of the relative tolerance `rtol` and absolute tolerance `atol` is
 very different for the outer Newton iteration and the inner GMRES iteration.
 
-For the outer Newton iteration the residual \$R(x^n)\$ measures the departure of the
-system from the solution (at each grid point). Its size can be compared to the size of the
-solution `x`, so it makes sense to define an `error norm' for \$R(x^n)\$ as
-```math
-E(x^n) = \\left\\lVert \\frac{R(x^n)}{\\mathtt{rtol} x^n \\mathtt{atol}} \\right\\rVert_2
-```
-where \$\\left\\lVert \\cdot \\right\\rVert\$ is the 'L2 norm' (square-root of sum of
-squares). We can further try to define a grid-size independent error norm by dividing out
-the number of grid points to get a root-mean-square (RMS) error rather than an L2 norm.
-```math
-E_{\\mathrm{RMS}}(x^n) = \\sqrt{ \\frac{1}{N} \\sum_i \\frac{R(x^n)_i}{\\mathtt{rtol} x^n_i \\mathtt{atol}} }
-```
-where \$N\$ is the total number of grid points.
+For the outer Newton iteration the residual `R(x^n)` measures the departure of the
+system from the solution with a weight `rtol` that weights the residual with a relative
+error compared to the solution at each grid point, and an absolute tolerance `atol`.
 
-In contrast, GMRES is constructed to minimise the L2 norm of \$r_k = b - A\\cdot x_k\$
-where GMRES is solving the linear system \$A\\cdot x = b\$, \$x_k\$ is the approximation
-to the solution \$x\$ at the \$k\$'th iteration and \$r_k\$ is the residual at the
-\$k\$'th iteration. There is no flexibility to measure error relative to \$x\$ in any
+In contrast, GMRES is constructed to minimise the norm || . || of  `r_k = b - A . x_k`
+where GMRES is solving the linear system `A . x = b`, `x_k` is the approximation
+to the solution `x` at the `k`'th iteration and `r_k` is the residual at the
+`k`'th iteration. There is no flexibility to measure error relative to `x` in any
 sense. For GMRES, a `relative tolerance' is relative to the residual of the
-right-hand-side \$b\$, which is the first iterate \$x_0\$ (when no initial guess is
+right-hand-side `b`, which is the first iterate `x_0` (when no initial guess is
 given). [Where a non-zero initial guess is given it might be better to use a different
 stopping criterion, see Carson et al. section 3.8.]. The stopping criterion for the GMRES
 iteration is therefore
 ```
-\\left\\lVert r_k \\right\\rVert < \\max(\\mathtt{linear\\_rtol} \\left\\lVert r_0 \\right\\rVert, \\mathtt{linear\\_atol}) = \\max(\\mathtt{linear\\_rtol} \\left\\lVert b \\right\\rVert, \\mathtt{linear\\_atol})
+|| r_k || < max(linear_rtol || r_0 ||, linear_atol) = max(linear_rtol} || b ||, linear_atol)
 ```
-As the GMRES solve is only used to get the right `direction' for the next Newton step, it
-is not necessary to have a very tight `linear_rtol` for the GMRES solve.
 """
-function newton_solve!(
-                         x, residual_func!, residual, delta_x, rhs_delta, v, w,
-                         nl_solver_params; left_preconditioner=nothing,
-                         right_preconditioner=nothing, recalculate_preconditioner=nothing,
-                         parallelisation_type=Val(:serial))
-    # This wrapper function constructs the `solver_type` from coords, so that the body of
-    # the inner `newton_solve!()` can be fully type-stable
-    solver_type = Val(Symbol((c for c ∈ keys(nl_solver_params.coords))...))
-    return newton_solve!(x, residual_func!, residual, delta_x, rhs_delta, v, w,
-                         nl_solver_params, solver_type, parallelisation_type;
-                         left_preconditioner=left_preconditioner,
-                         right_preconditioner=right_preconditioner,
-                         recalculate_preconditioner=recalculate_preconditioner)
-end
-function newton_solve!(x, residual_func!, residual, delta_x, rhs_delta, v, w,
-                       nl_solver_params, solver_type::Val,
-                       parallelisation_type::Val;
-                       left_preconditioner=nothing,
-                       right_preconditioner=nothing,
-                       recalculate_preconditioner=nothing)
+function newton_solve!(solution_vector_x::TVector, residual_func!::TResidual,
+            nl_solver_params::NewtonKrylovSolverData{TFloat};
+            left_preconditioner::TPreconditionerLeft=(solution_vector_x) -> nothing,
+            right_preconditioner::TPreconditionerRight=(solution_vector_x) -> nothing,
+            recalculate_preconditioner::TPreconditionerUpdate=() -> nothing,
+            diagnose::Bool=false) where {
+                TFloat <: AbstractFloat,
+                TVector <: AbstractArray{TFloat,1},
+                TResidual <: Function,
+                TPreconditionerLeft <: Function,
+                TPreconditionerRight <: Function,
+                TPreconditionerUpdate <: Function}
     rtol = nl_solver_params.rtol
     atol = nl_solver_params.atol
-    coords = nl_solver_params.coords
-    if left_preconditioner === nothing
-        left_preconditioner = identity
-    end
-    if right_preconditioner === nothing
-        right_preconditioner = identity
-    end
+    residual = nl_solver_params.residual
+    delta_x = nl_solver_params.delta_x
+    v = nl_solver_params.v
+    w = nl_solver_params.w
+    weight = nl_solver_params.weight
+    @boundscheck length(residual) == length(solution_vector_x) || throw(BoundsError(solution_vector_x))
 
-    norm_params = (coords, nl_solver_params.rtol, nl_solver_params.atol, x)
-
-    residual_func!(residual, x)
-    residual_norm = distributed_norm(solver_type, residual, norm_params...)
-    counter = 0
-    linear_counter = 0
-
-    # Would need this if delta_x was not set to zero within the Newton iteration loop
-    # below.
-    #parallel_map(solver_type, ()->0.0, delta_x)
-
-    close_counter = -1
-    close_linear_counter = -1
+    # N.B. the weights are proportional to 1/(atol + rtol * |x|)^2
+    calculate_weight!(weight, nl_solver_params.atol, nl_solver_params.rtol, solution_vector_x)
+    residual_func!(residual, solution_vector_x)
+    # N.B. because weights ~ 1/(atol + rtol * |x|)^2 the size of the residual norm
+    # is residual_norm ~ 1/(atol + rtol * |x|) >> 1 for the initial guess and
+    # residual_norm ~ 1 for the converged solution vector x
+    residual_norm = vector_norm(residual, weight)
+    newton_iterations = 0
+    GMRES_iterations = 0
     success = true
-    previous_residual_norm = residual_norm
-old_precon_iterations = nl_solver_params.precon_iterations[]
-    while (counter < 1 && residual_norm > 1.0e-8) || residual_norm > 1.0
-        counter += 1
-        #println("\nNewton ", counter)
+    while residual_norm > 1.0
+        newton_iterations += 1
 
-        # Solve (approximately?):
+        # use the GMRES algoritm to find the approximate solution to:
         #   J δx = -RHS(x)
-        parallel_map(solver_type, ()->0.0, delta_x)
-        linear_its = linear_solve!(x, residual_func!, residual, delta_x, v, w,
-                                   solver_type, parallelisation_type,
-                                   norm_params; coords=coords,
-                                   rtol=nl_solver_params.linear_rtol,
-                                   atol=nl_solver_params.linear_atol,
-                                   restart=nl_solver_params.linear_restart,
-                                   max_restarts=nl_solver_params.linear_max_restarts,
+        krylov_subspace_size = linear_solve!(solution_vector_x, residual_func!, residual, delta_x, v, w, weight;
+                                   GMRES_rtol=nl_solver_params.linear_rtol,
+                                   GMRES_atol=nl_solver_params.linear_atol,
+                                   max_krylov_subspace_size=nl_solver_params.krylov_subspace_max_size,
                                    left_preconditioner=left_preconditioner,
                                    right_preconditioner=right_preconditioner,
                                    H=nl_solver_params.H, c=nl_solver_params.c,
                                    s=nl_solver_params.s, g=nl_solver_params.g,
-                                   V=nl_solver_params.V, rhs_delta=rhs_delta,
-                                   initial_delta_x_is_zero=true)
-        linear_counter += linear_its
+                                   V=nl_solver_params.V, rhs_delta=nl_solver_params.rhs_delta)
+        GMRES_iterations += krylov_subspace_size
 
-        # If the residual does not decrease, we will do a line search to find an update
-        # that does decrease the residual. The value of `x` is used to define the
-        # normalisation value with rtol that is used to calculate the residual, so do not
-        # want to update it until the line search is completed (otherwise the norm changes
-        # during the line search, which might make it fail to converge). So calculate the
-        # updated value in the buffer `w` until the line search is completed, and only
-        # then copy it into `x`.
-        parallel_map(solver_type, (x) -> x, w, x)
-        parallel_map(solver_type, (x,delta_x) -> x + delta_x, w, x, delta_x)
+        # calculate the residual for the NaN diagnostic check
+        @. w = solution_vector_x + delta_x
         residual_func!(residual, w)
-
-        # For the Newton iteration, we want the norm divided by the (sqrt of the) number
-        # of grid points, so we can use a tolerance that is independent of the size of the
-        # grid. This is unlike the norms needed in `linear_solve!()`.
-        residual_norm = distributed_norm(solver_type, residual, norm_params...)
+        residual_norm = vector_norm(residual, weight)
         if isnan(residual_norm)
-            error("NaN in Newton iteration at iteration $counter")
+            error("NaN in Newton iteration at iteration $(newton_iterations)")
         end
-        parallel_map(solver_type, (w) -> w, x, w)
-        previous_residual_norm = residual_norm
 
-        if recalculate_preconditioner !== nothing && counter % nl_solver_params.preconditioner_update_interval == 0
-            # Have taken a large number of Newton iterations already - convergence must be
-            # slow, so try updating the preconditioner.
+        # update root estimate x_n+1 = x_n + delta_x
+        @. solution_vector_x = w
+
+        # update the weight for the inner product
+        calculate_weight!(weight, nl_solver_params.atol, nl_solver_params.rtol, solution_vector_x)
+
+        if newton_iterations % nl_solver_params.preconditioner_update_interval == 0
+            # Update the preconditioner to accelerate convergence
             recalculate_preconditioner()
         end
 
-        #println("Newton residual ", residual_norm, " ", linear_its, " $rtol $atol")
-
-        if residual_norm < 0.1/rtol && close_counter < 0 && close_linear_counter < 0
-            close_counter = counter
-            close_linear_counter = linear_counter
-        end
-
-        if counter > nl_solver_params.nonlinear_max_iterations
+        if newton_iterations > nl_solver_params.nonlinear_max_iterations
             println("maximum iteration limit reached")
             success = false
             break
         end
     end
-    nl_solver_params.n_solves[] += 1
-    nl_solver_params.nonlinear_iterations[] += counter
-    nl_solver_params.linear_iterations[] += linear_counter
-    nl_solver_params.max_nonlinear_iterations_this_step[] =
-        max(counter, nl_solver_params.max_nonlinear_iterations_this_step[])
-    nl_solver_params.max_linear_iterations_this_step[] =
-        max(linear_counter, nl_solver_params.max_linear_iterations_this_step[])
-#    println("Newton iterations: ", counter)
-#    println("Final residual: ", residual_norm)
-#    println("Total linear iterations: ", linear_counter)
-#    println("Linear iterations per Newton: ", linear_counter / counter)
-#    precon_count = nl_solver_params.precon_iterations[] - old_precon_iterations
-#    println("Total precon iterations: ", precon_count)
-#    println("Precon iterations per linear: ", precon_count / linear_counter)
-#
-#    println("Newton iterations after close: ", counter - close_counter)
-#    println("Total linear iterations after close: ", linear_counter - close_linear_counter)
-#    println("Linear iterations per Newton after close: ", (linear_counter - close_linear_counter) / (counter - close_counter))
-#    println()
+    nl_solver_params.diagnostics.n_solves[] += 1
+    nl_solver_params.diagnostics.nonlinear_iterations[] += newton_iterations
+    nl_solver_params.diagnostics.linear_iterations[] += GMRES_iterations
+    if diagnose
+        println("Newton iterations: ", newton_iterations)
+        println("Final residual_norm: ", residual_norm)
+        println("Total linear (GMRES) iterations: ", GMRES_iterations)
+        println("Linear (GMRES) iterations per Newton iteration: ", GMRES_iterations / newton_iterations)
+        println()
+    end
 
     return success
 end
 
-# Below we define the distributed_norm, distributed_dot, 
-# parallel_map and parallel_delta_x_calc functions, which
-# should be extended by the user for each new use case.
-# Examples for the serial test coordinate in JacobianFreeNewtonKrylovTests.jl
-# are included below to provide documentation for how this functions
-# should be implemented.
-
-function distributed_norm end
-
-# No parallelism for this test coordinate. Coordinate argument to this function
-# and those below permits flexibility for more complicated summations using MPI.
-function distributed_norm(
-                               ::Val{:testcoordinate}, residual::AbstractArray{jfnk_float, 1}, coords,
-                               rtol, atol, x)
-    residual_norm = 0.0
-    for i ∈ eachindex(residual, x)
-        residual_norm += (residual[i] / (rtol * abs(x[i]) + atol))^2
+function calculate_weight!(weight::Vector{TFloat},
+            atol::TFloat, rtol::TFloat, solution_vector_x::Vector{TFloat})  where TFloat <: AbstractFloat
+    @inbounds for i in eachindex(solution_vector_x,weight)
+        weight[i] = 1.0 / abs2(rtol * abs(solution_vector_x[i]) + atol)
     end
-
-    residual_norm = sqrt(residual_norm / length(residual))
-
-    return residual_norm
-end
-
-function distributed_dot end
-
-function distributed_dot(
-                  ::Val{:testcoordinate}, v::AbstractArray{jfnk_float, 1}, w::AbstractArray{jfnk_float, 1}, coords,
-                  rtol, atol, x)
-    local_dot = 0.0
-    for i ∈ eachindex(v,w)
-        local_dot += v[i] * w[i] / (rtol * abs(x[i]) + atol)^2
-    end
-    local_dot = local_dot / length(v)
-    return local_dot
-end
-
-function parallel_map end
-
-function parallel_map(
-                  ::Val{:testcoordinate}, func, result::AbstractArray{jfnk_float, 1})
-    for i ∈ eachindex(result)
-        result[i] = func()
-    end
+    # normalisation = length(weight)/sum(weight)
+    # @. weight *= normalisation
     return nothing
 end
-function parallel_map(
-                  ::Val{:testcoordinate}, func, result::AbstractArray{jfnk_float, 1}, x1)
-    for i ∈ eachindex(result)
-        result[i] = func(x1[i])
+function vector_norm(residual::Vector{TFloat},
+            weight::Vector{TFloat}) where TFloat <: AbstractFloat
+    return sqrt(vector_dot_product(residual, residual, weight))
+end
+
+function vector_dot_product(v::Vector{TFloat}, w::TVector,
+            weight::Vector{TFloat}) where {TFloat <: AbstractFloat,
+                                        TVector <: AbstractArray{TFloat,1}}
+    dot_product = 0.0
+    @inbounds for i in eachindex(v,w)
+        dot_product += v[i] * w[i] * weight[i]
     end
-    return nothing
-end
-function parallel_map(
-                  ::Val{:testcoordinate}, func, result::AbstractArray{jfnk_float, 1}, x1, x2)
-    if isa(x2, AbstractArray)
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i])
-        end
-    else
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2)
-        end
-    end
-    return nothing
-end
-function parallel_map(
-                  ::Val{:testcoordinate}, func, result::AbstractArray{jfnk_float, 1}, x1, x2, x3)
-    if isa(x3, AbstractArray)
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i], x3[i])
-        end
-    else
-        for i ∈ eachindex(result)
-            result[i] = func(x1[i], x2[i], x3)
-        end
-    end
-    return nothing
-end
-
-function parallel_delta_x_calc end
-
-function parallel_delta_x_calc(
-                  ::Val{:testcoordinate}, delta_x::AbstractArray{jfnk_float, 1}, V, y)
-    ny = length(y)
-    for iy ∈ 1:ny
-        for icoord ∈ eachindex(delta_x)
-            delta_x[icoord] += y[iy] * V[icoord,iy]
-        end
-    end
-    return nothing
-end
-
-
-# Utility function for neatness handling that V may be an array or a Tuple of arrays
-function select_from_V(V::Tuple, i)
-    return Tuple(selectdim(Vpart,ndims(Vpart),i) for Vpart ∈ V)
-end
-function select_from_V(V, i)
-    return selectdim(V,ndims(V),i)
-end
-
-"""
-Functions `set_g1!`, `set_Hji!` and `set_gi!` defined
-to permit type-determined operations on arrays
-where the type `parallelisation_type` allows the user
-to add methods where the arrays have different communicators
-and thus different MPI functions are required.
-
-Only the serial versions are defined in this module.
-"""
-function set_g1! end
-
-function set_g1!( ::Val{:serial}, g, beta)
-    g[1] = beta
-end
-
-
-function set_Hji! end
-
-function set_Hji!(::Val{:serial}, H, j::jfnk_int, i::jfnk_int, w)
-    H[j,i] = w
-end
-
-function set_gi! end
-
-function set_gi!(::Val{:serial}, g, c, H, s, i::jfnk_int)
-    for j ∈ 1:i-1
-        gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
-        H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
-        H[j,i] = gamma
-    end
-    delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
-    s[i] = H[i+1,i] / delta
-    c[i] = H[i,i] / delta
-    H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
-    H[i+1,i] = 0
-    g[i+1] = -s[i] * g[i]
-    g[i] = c[i] * g[i]
+    dot_product = dot_product / length(v)
+    return dot_product
 end
 
 """
@@ -500,93 +264,113 @@ which allows conveniently finding the residual at each step, and computing the f
 solution, without calculating a least-squares minimisation at each step. See 'algorithm 2
 MGS-GMRES' in Zou (2023) [https://doi.org/10.1016/j.amc.2023.127869].
 """
-function linear_solve!(
-                         x, residual_func!, residual0, delta_x, v, w,
-                         solver_type::Val, parallelisation_type::Val,
-                         norm_params; coords, rtol, atol, restart, max_restarts,
-                         left_preconditioner, right_preconditioner, H, c, s, g, V,
-                         rhs_delta, initial_delta_x_is_zero)
-    # Solve (approximately?):
+function linear_solve!(solution_vector_x::TVector, residual_func!::TResidual,
+            residual0::TVector, delta_x::TVector, v::TVector, w::TVector,
+            weight::TVector; GMRES_rtol::TFloat, GMRES_atol::TFloat, max_krylov_subspace_size::Int64,
+            left_preconditioner::TPreconditionerLeft,
+            right_preconditioner::TPreconditionerRight,
+            H::Array{TFloat,2}, c::TVector, s::TVector,
+            g::TVector, V::Array{TFloat,2}, rhs_delta::TVector) where {
+                        TFloat <: AbstractFloat,
+                        TVector <: Vector{TFloat},
+                        TResidual <: Function,
+                        TPreconditionerLeft <: Function,
+                        TPreconditionerRight <: Function}
+    # use the GMRES algoritm to find the approximate solution to:
     #   J δx = residual0
 
-    Jv_scale_factor = 1.0e3
+    # We calculate the product J.v by finite difference using the relation
+    #  J.v = ( R(x + e.v) - R(x))/ e
+    # for e a suitably chosen number such that
+    #  (R(x + e.v ) - R(x))/e = J.v + O(e.v)
+    #
+    # In the standard GMRES method where the vector v has entries of order unity,
+    # v being computed from a vector u by `v = u / vector_norm(u, weight)`.
+    # The number e should be << 1, but not so small as to cause rounding errors when
+    # evaluating R(x + e.v) - R(x). A suitable choice for e in these circumstances is
+    # e = `sqrt(eps())`, where `eps()` is machine precision for the floating point type.
+    #
+    # However, here we use the weighted GMRES method, and v is normalised with a large weight
+    # in the definition of `vector_norm()` such that the entries of
+    # `v = u / vector_norm(u, weight)` are small.
+    # To avoid possible rounding errors from a very small e.v, we need to choose
+    # e = `sqrt(eps())*vector_norm(ones(TFloat,length(x)), weight)`
+    # so that the large weight in the normalisation of v is cancelled out.
+    #
+    # We define e = `Jv_scale_factor` below
+    Jv_scale_factor = sqrt(eps(TFloat))*vector_norm(ones(TFloat,length(solution_vector_x)), weight)
     inv_Jv_scale_factor = 1.0 / Jv_scale_factor
-
-    # The vectors `v` that are passed to this function will be normalised so that
-    # `distributed_norm(v) == 1.0`. `distributed_norm()` is defined - including the
-    # relative and absolute tolerances from the Newton iteration - so that a vector with a
-    # norm of 1.0 is 'small' in the sense that a vector with a norm of 1.0 is small enough
-    # relative to `x` to consider the iteration converged. This means that `x+v` would be
-    # very close to `x`, so R(x+v)-R(x) would be likely to be badly affected by rounding
-    # errors, because `v` is so small, relative to `x`. We actually want to multiply `v`
-    # by a large number `Jv_scale_factor` (in constrast to the small `epsilon` in the
-    # 'usual' case where the norm does not include either reative or absolute tolerance)
-    # to ensure that we get a reasonable estimate of J.v.
-    function approximate_Jacobian_vector_product!(v, skip_first_precon::Bool=false)
-        if !skip_first_precon
-            right_preconditioner(v)
-        end
-
-        parallel_map(solver_type, (x,v) -> x + Jv_scale_factor * v, v, x, v)
-        residual_func!(rhs_delta, v; krylov=true)
-        parallel_map(solver_type, (rhs_delta, residual0) -> (rhs_delta - residual0) * inv_Jv_scale_factor,
-                     v, rhs_delta, residual0)
+    # the function computing J.v = ( R(x + e.v) - R(x))/ e
+    function approximate_Jacobian_vector_product!(v::Vector{TFloat}) where TFloat <: AbstractFloat
+        right_preconditioner(v)
+        @. v = solution_vector_x + Jv_scale_factor * v
+        residual_func!(rhs_delta, v)
+        @. v = (rhs_delta - residual0) * inv_Jv_scale_factor
         left_preconditioner(v)
-        return v
+        return nothing
     end
 
-    # To start with we use 'w' as a buffer to make a copy of residual0 to which we can apply
+    # To start with we use 'v' as a buffer to make a copy of residual0 to which we can apply
     # the left-preconditioner.
-    parallel_map(solver_type, (delta_x) -> delta_x, v, delta_x)
-    left_preconditioner(residual0)
-
-    # This function transforms the data stored in 'v' from δx to ≈J.δx
-    # If initial δx is all-zero, we can skip a right-preconditioner evaluation because it
-    # would just transform all-zero to all-zero.
-    approximate_Jacobian_vector_product!(v, initial_delta_x_is_zero)
+    copyto!(v,residual0)
+    left_preconditioner(v)
 
     # Now we actually set 'w' as the first Krylov vector, and normalise it.
-    parallel_map(solver_type, (residual0, v) -> -residual0 - v, w, residual0, v)
-    beta = distributed_norm(solver_type, w, norm_params...)
-    parallel_map(solver_type, (w,beta) -> w/beta, select_from_V(V, 1), w, beta)
-
-    set_g1!(parallelisation_type,g,beta)
+    @. w = -v
+    beta = vector_norm(w, weight)
+    @inbounds for i in eachindex(w)
+        V[i,1] = w[i]/beta
+    end
+    g[1] = beta
 
     # Set tolerance for GMRES iteration to rtol times the initial residual, unless this is
     # so small that it is smaller than atol, in which case use atol instead.
-    tol = max(rtol * beta, atol)
+    tol = max(GMRES_rtol * beta, GMRES_atol)
 
-    lsq_result = nothing
-    residual = Inf
-    counter = 0
-    restart_counter = 1
-    while true
-        inner_counter = 0
-        for i ∈ 1:restart
-            inner_counter = i
-            counter += 1
-            #println("Linear ", counter)
+    krylov_subspace_size = 0
+    # set H to zero to ensure lower-than-diagonal entries
+    # of the upper Hessenberg matrix are zero
+    @. H = 0.0
+    @inbounds begin
+        for i ∈ 1:max_krylov_subspace_size
+            krylov_subspace_size = i
 
             # Compute next Krylov vector
-            parallel_map(solver_type, (V) -> V, w, select_from_V(V, i))
+            @views copyto!(w,V[:,i])
+
+            # calculate J.w in place
             approximate_Jacobian_vector_product!(w)
 
             # Gram-Schmidt orthogonalization
             for j ∈ 1:i
-                parallel_map(solver_type, (V) -> V, v, select_from_V(V, j))
-                w_dot_Vj = distributed_dot(solver_type, w, v, norm_params...)
-
-                set_Hji!(parallelisation_type, H, j, i, w_dot_Vj)
-
-                parallel_map(solver_type, (w, V) -> w - H[j,i] * V, w, w, select_from_V(V, j))
+                @views copyto!(v, V[:,j])
+                w_dot_Vj = vector_dot_product(w, v, weight)
+                # subtract projection of v:  w = w - (v,w) * v
+                axpy!(-w_dot_Vj, v, w)
+                # store the Hessenberg matrix entry
+                H[j,i] = w_dot_Vj
             end
-            norm_w = distributed_norm(solver_type, w, norm_params...)
+            # store new, normalised Krylov vector
+            norm_w = vector_norm(w, weight)
+            for k in eachindex(w)
+                V[k,i+1] = w[k]/norm_w
+            end
+            # store the Hessenberg matrix entry
+            H[i+1,i] = norm_w
 
-            set_Hji!(parallelisation_type, H, i+1, i, norm_w)
-
-            parallel_map(solver_type, (w) -> w / H[i+1,i], select_from_V(V, i+1), w)
-
-            set_gi!(parallelisation_type, g, c, H, s, i)
+            # apply Givens rotation to find new values of H and g
+            for j ∈ 1:i-1
+                gamma = c[j] * H[j,i] + s[j] * H[j+1,i]
+                H[j+1,i] = -s[j] * H[j,i] + c[j] * H[j+1,i]
+                H[j,i] = gamma
+            end
+            delta = sqrt(H[i,i]^2 + H[i+1,i]^2)
+            s[i] = H[i+1,i] / delta
+            c[i] = H[i,i] / delta
+            H[i,i] = c[i] * H[i,i] + s[i] * H[i+1,i]
+            H[i+1,i] = 0
+            g[i+1] = -s[i] * g[i]
+            g[i] = c[i] * g[i]
 
             residual = abs(g[i+1])
 
@@ -594,39 +378,23 @@ function linear_solve!(
                 break
             end
         end
-        i = inner_counter
-
-        # Update initial guess to restart
-        #################################
-
-        @views y = H[1:i,1:i] \ g[1:i]
-
-        # The following calculates
-        #    delta_x .= delta_x .+ sum(y[i] .* V[:,i] for i ∈ 1:length(y))
-        parallel_delta_x_calc(solver_type, delta_x, V, y)
-        right_preconditioner(delta_x)
-
-        if residual < tol || restart_counter > max_restarts
-            break
-        end
-
-        restart_counter += 1
-
-        # Store J.delta_x in the variable delta_x, to use it to calculate the new first
-        # Krylov vector v/beta.
-        parallel_map(solver_type, (delta_x) -> delta_x, v, delta_x)
-        approximate_Jacobian_vector_product!(v)
-
-        # Note residual0 has already had the left_preconditioner!() applied to it.
-        parallel_map(solver_type, (residual0, v) -> -residual0 - v, v, residual0, v)
-        beta = distributed_norm(solver_type, v, norm_params...)
-        for i ∈ 2:length(y)
-            parallel_map(solver_type, () -> 0.0, select_from_V(V, i))
-        end
-        parallel_map(solver_type, (v,beta) -> v/beta, select_from_V(V, 1), v, beta)
     end
+    i = krylov_subspace_size
 
-    return counter
+    # finally, compute delta_x
+    #################################
+
+    # The following calculates y, in place
+    # @views y = H[1:i,1:i] \ g[1:i]
+    y = @views g[1:i]
+    ldiv!(lu(H[1:i,1:i]), y)
+
+    # The following calculates
+    #    delta_x .= sum(y[i] .* V[:,i] for i ∈ 1:length(y))
+    @views mul!(delta_x, V[:,1:i], y)
+    right_preconditioner(delta_x)
+
+    return krylov_subspace_size
 end
 
 end
